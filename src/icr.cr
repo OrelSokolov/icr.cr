@@ -19,6 +19,7 @@
 #   close                   teardown (live backend)
 
 require "./icr/pty"
+require "./icr/conpty"
 require "./icr/live"
 require "./icr/replay"
 require "./icr/editor"
@@ -32,17 +33,24 @@ module Icr
   #   1. ICR_CRYSTAL env var (explicit override)
   #   2. CRYSTAL_INTERPRETER_PATH env var (checked from Crystal code
   #      at startup via ENV — no Rakefile needed)
-  #   3. ~/.local/share/icr/crystal/bin/crystal (scripts/build-interpreter.sh)
-  #   4. `crystal` from PATH (usually lacks interpreter support; the
-  #      CLI then falls back to replay mode)
+  #   3. ~/.local/share/icr/crystal/bin/crystal[.exe]
+  #      (scripts/build-interpreter.sh)
+  #   4. `crystal` from PATH (official Windows builds ship WITH the
+  #      interpreter; on Linux they usually lack it and the CLI falls
+  #      back to replay mode)
   def self.interpreter_bin : String?
     if env = ENV["ICR_CRYSTAL"]? || ENV["CRYSTAL_INTERPRETER_PATH"]?
       return File.exists?(env) ? env : nil
     end
 
-    home = ENV["HOME"]? || "/root"
-    local = File.join(home, ".local/share/icr/crystal/bin/crystal")
-    return local if File.exists?(local)
+    # Path.home resolves USERPROFILE on Windows (HOME is usually unset
+    # there) and HOME on Unix — never hardcode /root.
+    local_dir = File.join(Path.home.to_s, ".local/share/icr/crystal/bin")
+    suffixes = {% if flag?(:windows) %} %w(.exe) {% else %} [] of String {% end %}
+    (suffixes + [""]).each do |suffix|
+      path = File.join(local_dir, "crystal#{suffix}")
+      return path if File.exists?(path)
+    end
 
     "crystal"
   end
@@ -59,30 +67,23 @@ module Icr
   # Pass replay: true to skip the interpreter entirely (the CLI's
   # --replay flag): always a ReplaySession, no fallback warnings.
   #
-  # The live backend is Unix-only (openpty); on Windows open_session
-  # always returns a ReplaySession.
-  {% if flag?(:unix) %}
-    alias Session = LiveSession | ReplaySession
-  {% else %}
-    alias Session = ReplaySession
-  {% end %}
+  # The live backend runs over openpty on Unix and ConPTY on Windows
+  # (Icr::Pty); open_session picks it whenever interpreter_bin
+  # resolves to an interpreter-capable crystal.
+  alias Session = LiveSession | ReplaySession
 
   def self.open_session(cwd : String? = nil, replay : Bool = false) : Session
     return ReplaySession.new if replay
-    {% if flag?(:unix) %}
-      if bin = interpreter_bin
-        begin
-          return LiveSession.new(bin, cwd)
-        rescue ex
-          warn_no_interpreter
-          STDERR.puts "live mode unavailable (#{ex.message})"
-        end
-      else
+    if bin = interpreter_bin
+      begin
+        return LiveSession.new(bin, cwd)
+      rescue ex
         warn_no_interpreter
+        STDERR.puts "live mode unavailable (#{ex.message})"
       end
-    {% else %}
+    else
       warn_no_interpreter
-    {% end %}
+    end
     ReplaySession.new
   end
 

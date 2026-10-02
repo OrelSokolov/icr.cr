@@ -17,10 +17,12 @@ icr> 2 + 2
   PTY: real in-process state, ~0.1s per line (completion is detected
   from the prompt at the stream tail — see `src/icr/live.cr` — not a
   fixed silence window, so the wrapper adds only a ~30ms grace on top
-  of the interpreter's own time). Official Linux
-  Crystal builds ship **without** interpreter support, so run
-  `scripts/build-interpreter.sh` once to build a local compiler with
-  `interpreter=1` into `~/.local/share/icr/` (nothing system-wide).
+  of the interpreter's own time). The PTY is openpty on Linux/macOS
+  and ConPTY on Windows. Official Linux Crystal builds ship
+  **without** interpreter support, so run `scripts/build-interpreter.sh`
+  once to build a local compiler with `interpreter=1` into
+  `~/.local/share/icr/` (nothing system-wide); official **Windows**
+  builds ship **with** it — nothing to build there.
 
   > **Warning:** C extensions don't work in the interpreter — a call
   > into one **deadlocks the interpreter**, and the session hangs until
@@ -32,12 +34,13 @@ icr> 2 + 2
 
 The backend is picked automatically: `ICR_CRYSTAL` env var →
 `CRYSTAL_INTERPRETER_PATH` env var →
-`~/.local/share/icr/crystal/bin/crystal` → `crystal` from PATH
-(usually falls through to replay). The `--replay` flag skips this
-chain entirely and always uses replay — handy when the code needs
-C extensions or the interpreter misbehaves. Both env vars are read
-directly from Crystal code (`ENV[...]?` in `Icr.interpreter_bin`) at
-startup.
+`~/.local/share/icr/crystal/bin/crystal` → `crystal` from PATH (on
+Linux this usually lacks interpreter support and icr falls through to
+replay; on Windows the system `crystal` gives live mode directly).
+The `--replay` flag skips this chain entirely and always uses replay —
+handy when the code needs C extensions or the interpreter misbehaves.
+Both env vars are read directly from Crystal code (`ENV[...]?` in
+`Icr.interpreter_bin`) at startup.
 
 ## Install
 
@@ -165,17 +168,18 @@ session = Icr.open_session(replay: true)   # force replay (the CLI's --replay)
 | Replay backend (`crystal run`) | ✅    | ✅    | ✅     |
 | Syntax highlighting            | ✅    | ✅    | ✅     |
 | Editor: history, candidate menu, Ctrl-T search | ✅ | ✅ | ✅ ¹ |
-| Live interpreter backend (`crystal i` over a PTY) | ✅ | ✅ ² | ✗ ³ |
+| Live interpreter backend (`crystal i` over a PTY) | ✅ | ✅ ² | ✅ ³ |
 
-¹ Windows has no termios raw mode in icr, so interactive input falls
-back to the basic line reader: plain lines, no history navigation, no
-candidate menu or Ctrl-T (they live in the Unix editor). Paste still
-works; everything non-interactive — replay, highlighting of results,
-`--replay`, `.program`, `.reset` — is identical.
+¹ The Windows editor uses the console's VT input mode
+(ENABLE_VIRTUAL_TERMINAL_INPUT), so keys arrive as the same CSI/SS3
+sequences the Unix editor parses — history, Tab completion and Ctrl-T
+work identically.
 ² macOS builds the same code path (openpty via libutil) and the
 interpreter script supports it, but neither is exercised in this
 repo's CI — reports welcome.
-³ No openpty on Windows; icr selects replay mode automatically.
+³ Windows runs the live backend over ConPTY (CreatePseudoConsole)
+against the system `crystal` — official Windows builds ship WITH
+interpreter support, so no local build is needed there.
 
 ## Notes
 
@@ -192,10 +196,11 @@ repo's CI — reports welcome.
   machine protocol, and piping stdin without a TTY silently swallows
   results.
 - Live backend: Linux and macOS (openpty via libutil; the interpreter
-  builds from Crystal sources on both — see `scripts/build-interpreter.sh`).
-  macOS is untested in this repo; on Windows there is no openpty, so
-  icr builds without the live backend (replay mode only, selected
-  automatically — `crystal run` works everywhere Crystal does).
+  builds from Crystal sources on both — see `scripts/build-interpreter.sh`)
+  and Windows (ConPTY via CreatePseudoConsole, using the system
+  `crystal` — official Windows builds ship WITH interpreter support,
+  so `rake interpreter` does nothing extra there). macOS is untested
+  in this repo.
 - C extensions are not supported by the `crystal i` interpreter: calling
   into one deadlocks the interpreter process (a warning is printed at
   startup in live mode). Replay mode compiles with `crystal run` and is

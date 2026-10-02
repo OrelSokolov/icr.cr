@@ -37,7 +37,10 @@ desc "Build a local Crystal compiler WITH interpreter support " \
      "(~/.local/share/icr; skipped when already present)"
 task :interpreter do
   if WINDOWS
-    puts "Live interpreter backend is Unix-only — skipping (icr runs in replay mode on Windows)."
+    # No local build on Windows — the live backend uses the system
+    # `crystal` over ConPTY (official Windows builds ship the
+    # interpreter; Linux builds do not, hence the build script).
+    puts "Windows: using the system `crystal` for live mode (ConPTY backend)."
   elsif File.exist?(INTERPRETER)
     green = $stdout.tty? ? "\e[32m" : ""
     reset = $stdout.tty? ? "\e[0m" : ""

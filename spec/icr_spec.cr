@@ -101,10 +101,9 @@ describe Icr::ReplaySession do
   end
 end
 
-{% if flag?(:unix) %}
+{% if flag?(:unix) || flag?(:windows) %}
   # Live specs need an interpreter-capable crystal (the same resolution
   # chain the CLI uses); replay-only environments skip the whole block.
-  # The live backend itself is Unix-only (openpty).
   def live_interpreter_available? : Bool
   bin = Icr.interpreter_bin
   return false unless bin
@@ -166,7 +165,8 @@ describe Icr::LineEditor do
 end
 {% end %}
 
-describe Icr::BasicLineEditor do  it "prints the prompt and returns the line" do
+describe Icr::BasicLineEditor do
+  it "prints the prompt and returns the line" do
     input = IO::Memory.new("1 + 1\n")
     output = IO::Memory.new
     editor = Icr::BasicLineEditor.new(input, output)
@@ -179,6 +179,45 @@ describe Icr::BasicLineEditor do  it "prints the prompt and returns the line" do
     editor.read_line("icr> ", [] of String).should be_nil
   end
 end
+
+{% if flag?(:windows) %}
+  # On non-console handles (IO::Memory here) enter_raw switches nothing
+  # and the editor reads bytes directly — the same code path a real
+  # console takes minus the SetConsoleMode dance.
+  describe Icr::WinLineEditor do
+    it "edits a line, handles backspace and renders the prompt" do
+      editor = Icr::WinLineEditor.new(IO::Memory.new("hi\x7f\r"), IO::Memory.new)
+      editor.read_line("icr> ", [] of String).should eq("h")
+    end
+
+    it "decodes multi-byte UTF-8 input" do
+      editor = Icr::WinLineEditor.new(IO::Memory.new("ф\r"), IO::Memory.new)
+      editor.read_line("icr> ", [] of String).should eq("ф")
+    end
+
+    it "walks history with ↑/↓" do
+      editor = Icr::WinLineEditor.new(IO::Memory.new("\e[A\e[A\e[B\r"), IO::Memory.new)
+      editor.read_line("icr> ", ["p", "q"]).should eq("q")
+    end
+
+    it "discards the line on Ctrl+C and keeps the rest buffered" do
+      editor = Icr::WinLineEditor.new(IO::Memory.new("abc\u{3}def\r"), IO::Memory.new)
+      editor.read_line("icr> ", [] of String).should eq("")
+      editor.read_line("icr> ", [] of String).should eq("def")
+    end
+
+    it "returns nil on Ctrl+D on an empty line" do
+      editor = Icr::WinLineEditor.new(IO::Memory.new("\u{4}"), IO::Memory.new)
+      editor.read_line("icr> ", [] of String).should be_nil
+    end
+
+    it "completes the token before the cursor on Tab" do
+      index = Icr::Completion::Index.new("T\tMyMath\tmodule")
+      editor = Icr::WinLineEditor.new(IO::Memory.new("MyMa\t\r"), IO::Memory.new, index)
+      editor.read_line("icr> ", [] of String).should eq("MyMath")
+    end
+  end
+{% end %}
 
 describe "syntax highlighting" do
   # Same stdlib highlighter `crystal i` uses (Crystal::ReplReader#highlight),

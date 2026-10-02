@@ -1,7 +1,6 @@
 # Live backend: a persistent `crystal i` interpreter process over a PTY.
-# Unix-only (openpty); on Windows the console runs in replay mode.
+# openpty on Unix, ConPTY on Windows (Icr::Pty — see pty.cr / conpty.cr).
 #
-{% if flag?(:unix) %}
 # The PTY protocol was reverse-engineered from lib/reply's CharReader:
 # a read() returning more than 6 bytes (or a chunk containing the Enter
 # byte) is treated as a PASTE, so the line text and the Enter key (\r)
@@ -26,6 +25,9 @@ class Icr::LiveSession
   class Error < Exception; end
 
   ANSI_RE         = /\e\[[0-9;?]*[A-Za-z]/
+  # OSC sequences (window title) — not covered by ANSI_RE; ConPTY emits
+  # them around the startup prompt
+  OSC_RE          = /\e\][^\a]*\a/
   # prompt at the end of ANSI-stripped data, any index/marker (repaints)
   ANY_PROMPT_RE   = /icr:\d+[>*] *\z/
   # fresh idle prompt at the very end of the RAW stream: nothing follows
@@ -53,8 +55,7 @@ class Icr::LiveSession
   # line number of the last prompt seen; 0 until the first prompt
   @prompt_index = 0
 
-  @master : IO::FileDescriptor
-  @process : Process
+  @pty : Icr::Pty
 
   def initialize(@bin : String, cwd : String? = nil)
     # Run the interpreter in the user's directory so relative requires
@@ -62,8 +63,7 @@ class Icr::LiveSession
     # install dir. The wrapper script locates its compiler via its own
     # path, so chdir doesn't affect it.
     @cwd = cwd || Dir.current
-    @master = uninitialized IO::FileDescriptor
-    @process = uninitialized Process
+    @pty = uninitialized Icr::Pty
     start_process
   end
 
@@ -120,20 +120,20 @@ class Icr::LiveSession
       end
     end
     20.times do
-      break unless @process.exists?
+      break unless @pty.exists?
       sleep 0.05.seconds
     end
-    if @process.exists?
-      @process.terminate rescue nil
-      5.times { break unless @process.exists?; sleep 0.05.seconds }
-      @process.terminate(graceful: false) rescue nil if @process.exists?
+    if @pty.exists?
+      @pty.terminate rescue nil
+      5.times { break unless @pty.exists?; sleep 0.05.seconds }
+      @pty.terminate(graceful: false) rescue nil if @pty.exists?
     end
-    @process.wait rescue nil
-    @master.close rescue nil
+    @pty.wait rescue nil
+    @pty.close
   end
 
   def alive? : Bool
-    !@dead && @process.exists?
+    !@dead && @pty.exists?
   end
 
   def program_source : String
@@ -147,20 +147,15 @@ class Icr::LiveSession
   private def start_process
     @dead = false
     @prompt_index = 0 # re-detected from the startup prompt below
-    win = LibPty::Winsize.new(ws_row: 50, ws_col: 500, ws_xpixel: 0, ws_ypixel: 0)
-    ret = LibPty.openpty(out master, out slave, Pointer(UInt8).null,
-      Pointer(Void).null, pointerof(win))
-    raise Error.new("openpty failed") unless ret == 0
-
-    slave_io = IO::FileDescriptor.new(slave)
     env = ENV.to_h.merge({
       "TERM"                            => "xterm-256color",
       "CRYSTAL_INTERPRETER_SKIP_BANNER" => "1",
     })
-    @process = Process.new(@bin, {"i"}, chdir: @cwd, env: env,
-      input: slave_io, output: slave_io, error: slave_io)
-    slave_io.close # parent copy; the child owns the slave now
-    @master = IO::FileDescriptor.new(master)
+    begin
+      @pty = Icr::Pty.open(@bin, {"i"}, @cwd, env)
+    rescue ex : Icr::Pty::Error
+      raise Error.new(ex.message) # keep the LiveSession::Error contract
+    end
     read_until_prompt # wait for the "icr:1> " prompt; banner lands before it
     if @dead
       raise Error.new("#{@bin} died at startup — it likely lacks interpreter " \
@@ -171,8 +166,7 @@ class Icr::LiveSession
   private def write_chunk(data : String) : Nil
     # IO#write is write-all semantics (returns Nil) — no partial-write
     # loop needed.
-    @master.write(data.to_slice)
-    @master.flush
+    @pty.write(data.to_slice)
   end
 
   # After sending the line text: wait until the editor has consumed it
@@ -182,14 +176,14 @@ class Icr::LiveSession
   private def wait_for_echo(line : String) : Nil
     buf = Bytes.new(4096)
     data = IO::Memory.new
-    @master.read_timeout = SYNC_SILENCE.seconds
+    @pty.read_timeout = SYNC_SILENCE.seconds
     loop do
       n = begin
-        @master.read(buf)
+        @pty.read(buf)
       rescue IO::TimeoutError
         break
       rescue IO::Error
-        @dead = true # EIO: interpreter released the slave and died
+        @dead = true # EIO: interpreter released the pty and died
         break
       end
       break if n.zero?
@@ -216,16 +210,16 @@ class Icr::LiveSession
     finish_at = Time.instant + SUBMIT_DEADLINE.seconds
     grace_until = nil : Time?
     loop do
-      @master.read_timeout = (grace_until ? GRACE_SILENCE : RESULT_SILENCE).seconds
+      @pty.read_timeout = (grace_until ? GRACE_SILENCE : RESULT_SILENCE).seconds
       n = begin
-        @master.read(buf)
+        @pty.read(buf)
       rescue IO::TimeoutError
         break if grace_until                # fast path: fresh prompt settled
         break if quiet_prompt?(raw)         # legacy: quiet AND prompt at end
         break if Time.instant >= finish_at
         next
       rescue IO::Error
-        @dead = true # EIO: interpreter died (e.g. user code called exit)
+        @dead = true # the interpreter died (e.g. user code called exit)
         break
       end
       if n.zero? # EOF: interpreter died
@@ -253,8 +247,11 @@ class Icr::LiveSession
   # no fresh-prompt tail: an incomplete-expression redraw (the editor
   # waits for more input) or an unexpected prompt shape — treat
   # quiet-plus-prompt as idle like the old silence heuristic did.
+  # ConPTY redraws end with a run of \e[K\r\n lines after the last
+  # "icr:N* " prompt, so trailing newlines are ignored before matching.
   private def quiet_prompt?(raw : String) : Bool
-    !raw.gsub(ANSI_RE, "").match(ANY_PROMPT_RE).nil?
+    text = raw.gsub(ANSI_RE, "").gsub(OSC_RE, "").rstrip
+    !text.match(ANY_PROMPT_RE).nil?
   end
 
   # Remember the line number of the newest fresh prompt so the next
@@ -271,7 +268,7 @@ class Icr::LiveSession
   # "=> value" tail.
   private def extract(raw : String) : String
     text = raw.rindex("\e[?25h").try { |i| raw[(i + 6)..] } || raw
-    text = text.gsub(ANSI_RE, "").gsub("\r\n", "\n")
+    text = text.gsub(ANSI_RE, "").gsub(OSC_RE, "").gsub("\r\n", "\n")
     text = text.sub(/(icr:\d+[>*] *)\z/, "")
     return dead_message if text.empty? && @dead
 
@@ -288,4 +285,3 @@ class Icr::LiveSession
     end
   end
 end
-{% end %}
