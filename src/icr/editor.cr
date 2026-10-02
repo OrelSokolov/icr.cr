@@ -14,6 +14,8 @@
 # TUI::Editor, scaled down to a single line — so they are directly
 # unit-testable and shared by every adapter.
 
+require "crystal/syntax_highlighter/colorize"
+
 abstract class Icr::LineEditor
   # Read one line, rendering `prompt` and walking `history` with ↑/↓.
   # Returns nil on EOF (Ctrl+D on an empty line); Ctrl+C discards the
@@ -456,11 +458,25 @@ end
     private def render(prompt : String, state : EditState) : Nil
       # Repaint the whole line; \e[K clears whatever the previous paint
       # left to the right, then the cursor steps back from the end to
-      # its position within the buffer.
+      # its position within the buffer. The highlight's ANSI codes are
+      # zero-width, so the cursor math still uses the plain buffer.
       behind = state.buffer.size - state.cursor
-      @output.print "\r#{prompt}#{state.buffer}\e[K"
+      @output.print "\r#{prompt}#{highlight(state.buffer)}\e[K"
       @output.print "\e[#{behind}D" if behind > 0
       @output.flush
+    end
+
+    # Paint the buffer exactly like the live interpreter paints its own
+    # echo: `crystal i` runs the very same stdlib highlighter
+    # (Crystal::ReplReader#highlight → SyntaxHighlighter::Colorize), so
+    # icr's input and the interpreter's echo match token for token.
+    # highlight! falls back to the plain line when it can't lex
+    # mid-typing input (e.g. an open string), and colors are suppressed
+    # when the output isn't a TTY or NO_COLOR/TERM=dumb say so
+    # (Colorize.enabled? checks both).
+    private def highlight(line : String) : String
+      return line unless @output.tty? && ::Colorize.enabled?
+      Crystal::SyntaxHighlighter::Colorize.highlight!(line)
     end
   end
 {% end %}

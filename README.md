@@ -3,7 +3,7 @@
 An irb-style console for Crystal:
 
 ```
-⢀⡴⠊⢉⡟⢿  icr v1.5.0 - Crystal 1.21.0 - live interpreter
+⢀⡴⠊⢉⡟⢿  icr v1.6.0 - Crystal 1.21.0 - live interpreter
 ⣎⣀⣴⡋⡟⣻  "exit" to quit · ".program" session source · ".reset" clear
 ⣟⣼⣱⣽⣟⣾  ~/your/project
 icr> 2 + 2
@@ -61,6 +61,12 @@ Commands inside the console:
 An incomplete line (`def f`, open blocks…) continues with `... >`
 prompts until the expression is complete. In replay mode, end a line
 with `\` to continue on the next one.
+
+The input line is syntax-highlighted with the same stdlib highlighter
+the interpreter uses for its own echo (`crystal/syntax_highlighter`
+— see `Crystal::ReplReader#highlight` in the Crystal sources), so
+icr's prompt line and the interpreter's colors match token for token.
+`NO_COLOR` and `TERM=dumb` disable it.
 
 ## Autocomplete (baked at compile time)
 

@@ -157,8 +157,7 @@ describe Icr::LineEditor do
   end
 end
 
-describe Icr::BasicLineEditor do
-  it "prints the prompt and returns the line" do
+describe Icr::BasicLineEditor do  it "prints the prompt and returns the line" do
     input = IO::Memory.new("1 + 1\n")
     output = IO::Memory.new
     editor = Icr::BasicLineEditor.new(input, output)
@@ -169,6 +168,20 @@ describe Icr::BasicLineEditor do
   it "returns nil on EOF" do
     editor = Icr::BasicLineEditor.new(IO::Memory.new, IO::Memory.new)
     editor.read_line("icr> ", [] of String).should be_nil
+  end
+end
+
+describe "syntax highlighting" do
+  # Same stdlib highlighter `crystal i` uses (Crystal::ReplReader#highlight),
+  # so icr's input line and the interpreter's echo match token for token.
+  it "colors keywords and idents like the interpreter echo" do
+    hl = Crystal::SyntaxHighlighter::Colorize.highlight!("def f(x)")
+    hl.should contain("\e[91mdef\e[39m") # keyword → light red
+    hl.should contain("\e[92mf\e[39m")   # ident after def → light green
+  end
+
+  it "falls back to the plain line on unlexable mid-typing input" do
+    Crystal::SyntaxHighlighter::Colorize.highlight!(%("open)).should eq(%("open))
   end
 end
 
