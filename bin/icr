@@ -1,0 +1,4 @@
+#!/bin/sh
+# icr — Interactive Crystal Shell
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec crystal run --no-color "$DIR/../src/cli.cr" "$@"

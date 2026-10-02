@@ -1,0 +1,12 @@
+name: icr
+version: 1.0.0
+authors:
+  - OrelSokolov
+description: |
+  Interactive Crystal Shell — an irb-style console for Crystal.
+  Live `crystal i` backend over a PTY (instant, stateful) with an
+  automatic whole-session-recompile fallback for stock compilers.
+crystal: ">= 1.21.0"
+homepage: https://github.com/OrelSokolov/icr.cr
+repository: https://github.com/OrelSokolov/icr.cr
+license: MIT
