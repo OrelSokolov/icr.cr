@@ -71,7 +71,10 @@ class Icr::ReplaySession
       emit(io, new_line, wrap_new)
     end
 
-    path = File.tempname("icr", ".cr")
+    # The temp file lives in the project directory, not /tmp, so
+    # relative requires (`require "./examples/foo"`) resolve against
+    # the user's cwd, matching the live backend. Deleted in ensure.
+    path = File.tempname("icr", ".cr", dir: Dir.current)
     begin
       File.write(path, source)
       Process.run(

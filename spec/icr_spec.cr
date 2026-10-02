@@ -24,14 +24,18 @@ describe Icr do
   end
 
   it "falls back to CRYSTAL_INTERPRETER_PATH when ICR_CRYSTAL is unset" do
-    with_env("CRYSTAL_INTERPRETER_PATH", "/bin/sh") do
-      Icr.interpreter_bin.should eq("/bin/sh")
+    with_env("ICR_CRYSTAL", nil) do
+      with_env("CRYSTAL_INTERPRETER_PATH", "/bin/sh") do
+        Icr.interpreter_bin.should eq("/bin/sh")
+      end
     end
   end
 
   it "returns nil for a missing CRYSTAL_INTERPRETER_PATH" do
-    with_env("CRYSTAL_INTERPRETER_PATH", "/nonexistent-crystal") do
-      Icr.interpreter_bin.should be_nil
+    with_env("ICR_CRYSTAL", nil) do
+      with_env("CRYSTAL_INTERPRETER_PATH", "/nonexistent-crystal") do
+        Icr.interpreter_bin.should be_nil
+      end
     end
   end
 
@@ -68,6 +72,12 @@ describe Icr::ReplaySession do
     session = Icr::ReplaySession.new
     session.submit("def broken(").should match /[Ee]rror/
     session.submit("1 + 1").should contain("=> 2")
+  end
+
+  it "resolves relative requires against the user's cwd" do
+    session = Icr::ReplaySession.new
+    session.submit(%(require "./examples/my_math")).should_not match /[Ee]rror/
+    session.submit("MyMath.square(5)").should contain("=> 25")
   end
 
   it "clears state on reset" do
@@ -178,7 +188,7 @@ end
 
 def with_env(key, value)
   old = ENV[key]?
-  ENV[key] = value
+  value ? (ENV[key] = value) : ENV.delete(key)
   begin
     yield
   ensure

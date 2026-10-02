@@ -29,7 +29,11 @@ class Icr::LiveSession
   @process : Process
 
   def initialize(@bin : String, cwd : String? = nil)
-    @cwd = cwd || File.dirname(@bin)
+    # Run the interpreter in the user's directory so relative requires
+    # (`require "./examples/foo"`) resolve against it, not the crystal
+    # install dir. The wrapper script locates its compiler via its own
+    # path, so chdir doesn't affect it.
+    @cwd = cwd || Dir.current
     @master = uninitialized IO::FileDescriptor
     @process = uninitialized Process
     start_process
