@@ -47,6 +47,7 @@ module Icr::CLI
       end
     end
 
+    puts # finish the "icr> " line cleanly on exit / Ctrl+D
     io.close if io.is_a?(Icr::LiveSession)
   end
 end
