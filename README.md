@@ -157,6 +157,26 @@ session = Icr::LiveSession.new(Icr.interpreter_bin.not_nil!)
 session = Icr.open_session(replay: true)   # force replay (the CLI's --replay)
 ```
 
+## Platform support
+
+|                                | Linux | macOS | Windows |
+|--------------------------------|:-----:|:-----:|:-------:|
+| Build + specs (CI)             | ✅    | ✅    | ✅     |
+| Replay backend (`crystal run`) | ✅    | ✅    | ✅     |
+| Syntax highlighting            | ✅    | ✅    | ✅     |
+| Editor: history, candidate menu, Ctrl-T search | ✅ | ✅ | ✅ ¹ |
+| Live interpreter backend (`crystal i` over a PTY) | ✅ | ✅ ² | ✗ ³ |
+
+¹ Windows has no termios raw mode in icr, so interactive input falls
+back to the basic line reader: plain lines, no history navigation, no
+candidate menu or Ctrl-T (they live in the Unix editor). Paste still
+works; everything non-interactive — replay, highlighting of results,
+`--replay`, `.program`, `.reset` — is identical.
+² macOS builds the same code path (openpty via libutil) and the
+interpreter script supports it, but neither is exercised in this
+repo's CI — reports welcome.
+³ No openpty on Windows; icr selects replay mode automatically.
+
 ## Notes
 
 - **Why a PTY wrapper instead of embedding the interpreter?** The

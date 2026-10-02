@@ -21,13 +21,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Refresh apt indexes first — stale mirrors 404 on libevent (the
+      # install-crystal action installs its dev packages via apt).
+      - name: Update apt package index
+        if: runner.os == 'Linux'
+        run: sudo apt-get update
+
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
         with:
           crystal: 1.21.0
 
       - name: Build the CLI
-        run: crystal build --no-color src/cli.cr -o build/icr
+        shell: bash
+        run: |
+          # build/ is gitignored and the platform linkers won't create it
+          mkdir -p build
+          crystal build --no-color src/cli.cr -o build/icr
 
       - name: Run specs
         run: crystal spec --no-color
