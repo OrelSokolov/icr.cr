@@ -34,8 +34,10 @@ module Icr::CLI
         result = io.submit(line)
         elapsed = Time.instant - started
         puts result.presence || "# (no output)"
-        timing = sprintf("# %.1fs", elapsed.total_seconds)
-        puts STDOUT.tty? ? "\e[90m#{timing}\e[0m" : timing
+        if elapsed.total_seconds >= 1
+          timing = sprintf("# %.1fs", elapsed.total_seconds)
+          puts STDOUT.tty? ? "\e[90m#{timing}\e[0m" : timing
+        end
         history << line unless history.last? == line
         # user code killed the interpreter (e.g. Process.exit) — follow
         # it; replay sessions report alive? always true
