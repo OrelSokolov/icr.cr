@@ -21,9 +21,10 @@
 require "./icr/pty"
 require "./icr/live"
 require "./icr/replay"
+require "./icr/editor"
 
 module Icr
-  VERSION = "1.1.0"
+  VERSION = "1.2.0"
 
   # Where the live backend's compiler comes from, in order:
   #   1. ICR_CRYSTAL env var (explicit override)

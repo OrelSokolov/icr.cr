@@ -78,6 +78,104 @@ describe Icr::ReplaySession do
   end
 end
 
+describe Icr::LineEditor do
+  it "picks the basic editor when stdin is not a TTY" do
+    STDIN.tty?.should be_false # specs run with piped/closed stdin
+    Icr::LineEditor.new.should be_a(Icr::BasicLineEditor)
+  end
+end
+
+describe Icr::BasicLineEditor do
+  it "prints the prompt and returns the line" do
+    input = IO::Memory.new("1 + 1\n")
+    output = IO::Memory.new
+    editor = Icr::BasicLineEditor.new(input, output)
+    editor.read_line("icr> ", [] of String).should eq("1 + 1")
+    output.to_s.should eq("icr> ")
+  end
+
+  it "returns nil on EOF" do
+    editor = Icr::BasicLineEditor.new(IO::Memory.new, IO::Memory.new)
+    editor.read_line("icr> ", [] of String).should be_nil
+  end
+end
+
+describe Icr::KeyParser do
+  it "parses plain chars, Enter and Backspace" do
+    parser = Icr::KeyParser.new
+    parser.parse_one("a".bytes)[0].not_nil!.char.should eq('a')
+    parser.parse_one([13_u8])[0].not_nil!.key.enter?.should be_true
+    parser.parse_one([127_u8])[0].not_nil!.key.backspace?.should be_true
+  end
+
+  it "parses CSI arrows, Home, End and Delete" do
+    parser = Icr::KeyParser.new
+    parser.parse_one("\e[A".bytes)[0].not_nil!.key.up?.should be_true
+    parser.parse_one("\e[B".bytes)[0].not_nil!.key.down?.should be_true
+    parser.parse_one("\e[C".bytes)[0].not_nil!.key.right?.should be_true
+    parser.parse_one("\e[D".bytes)[0].not_nil!.key.left?.should be_true
+    parser.parse_one("\e[H".bytes)[0].not_nil!.key.home?.should be_true
+    parser.parse_one("\e[3~".bytes)[0].not_nil!.key.delete?.should be_true
+    parser.parse_one("\e[4~".bytes)[0].not_nil!.key.end?.should be_true
+  end
+
+  it "parses SS3 arrows and reports consumed length" do
+    parser = Icr::KeyParser.new
+    event, consumed = parser.parse_one("\eOD".bytes) # left
+    event.not_nil!.key.left?.should be_true
+    consumed.should eq(3)
+  end
+
+  it "asks for more bytes on an incomplete escape sequence" do
+    parser = Icr::KeyParser.new
+    parser.parse_one([27_u8])[1].should eq(0)
+    parser.parse_one("\e[".bytes)[1].should eq(0)
+  end
+
+  it "decodes multi-byte UTF-8 as one Char event" do
+    parser = Icr::KeyParser.new
+    event, consumed = parser.parse_one("ф".bytes)
+    event.not_nil!.char.should eq('ф')
+    consumed.should eq("ф".bytesize)
+  end
+end
+
+describe Icr::EditState do
+  it "edits at the cursor" do
+    state = Icr::EditState.new([] of String)
+    "ab".each_char { |c| state.handle(Icr::KeyEvent.char(c)) }
+    state.handle(Icr::KeyEvent.new(Icr::Key::Left))
+    state.handle(Icr::KeyEvent.char('c'))
+    state.buffer.should eq("acb")
+    state.cursor.should eq(2)
+
+    state.handle(Icr::KeyEvent.new(Icr::Key::End))
+    state.handle(Icr::KeyEvent.new(Icr::Key::Delete))
+    state.buffer.should eq("acb")
+    state.handle(Icr::KeyEvent.new(Icr::Key::Backspace))
+    state.buffer.should eq("ac")
+
+    state.handle(Icr::KeyEvent.new(Icr::Key::Home))
+    state.handle(Icr::KeyEvent.new(Icr::Key::Delete))
+    state.buffer.should eq("c")
+    state.cursor.should eq(0)
+  end
+
+  it "navigates history preserving the draft" do
+    history = ["p", "q"]
+    state = Icr::EditState.new(history)
+    state.handle(Icr::KeyEvent.char('d'))
+    state.handle(Icr::KeyEvent.new(Icr::Key::Up))   # → "q"
+    state.buffer.should eq("q")
+    state.handle(Icr::KeyEvent.new(Icr::Key::Up))   # → "p"
+    state.buffer.should eq("p")
+    state.handle(Icr::KeyEvent.new(Icr::Key::Down)) # → "q"
+    state.buffer.should eq("q")
+    state.handle(Icr::KeyEvent.new(Icr::Key::Down)) # → draft
+    state.buffer.should eq("d")
+  end
+end
+
 def with_env(key, value)
   old = ENV[key]?
   ENV[key] = value

@@ -3,11 +3,13 @@
 module Icr::CLI
   def self.run : Nil
     io = Icr.open_session
+    editor = Icr::LineEditor.new
+    history = [] of String
     mode = io.is_a?(Icr::LiveSession) ? "live interpreter" : "replay, ~2s/line"
     puts Icr.banner(mode)
     loop do
-      print io.is_a?(Icr::LiveSession) && io.needs_continuation? ? "... > " : "icr> "
-      line = STDIN.gets
+      prompt = io.is_a?(Icr::LiveSession) && io.needs_continuation? ? "... > " : "icr> "
+      line = editor.read_line(prompt, history)
       break if line.nil? # Ctrl+D
       line = line.strip
       next if line.empty?
@@ -15,8 +17,7 @@ module Icr::CLI
       unless io.is_a?(Icr::LiveSession)
         # Multi-line input in replay mode: end a line with '\' to continue.
         while line.ends_with?('\\')
-          print "... > "
-          more = STDIN.gets
+          more = editor.read_line("... > ", history)
           break if more.nil?
           line = line.rchop + "\n" + more
         end
@@ -32,12 +33,14 @@ module Icr::CLI
         elapsed = Time.instant - started
         puts result.presence || "# (no output)"
         printf("# %.1fs\n", elapsed.total_seconds)
+        history << line unless history.last? == line
         # user code killed the interpreter (e.g. Process.exit) — follow it
         break if io.is_a?(Icr::LiveSession) && !io.alive?
       end
     end
 
     puts # finish the "icr> " line cleanly on exit / Ctrl+D
+    editor.close
     io.close if io.is_a?(Icr::LiveSession)
   end
 end
