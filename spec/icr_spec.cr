@@ -53,6 +53,13 @@ describe Icr do
       session.should be_a(Icr::ReplaySession)
     end
   end
+
+  it "open_session(replay: true) skips the interpreter even when one exists" do
+    with_env("ICR_CRYSTAL", "/bin/sh") do
+      session = Icr.open_session(replay: true)
+      session.should be_a(Icr::ReplaySession)
+    end
+  end
 end
 
 describe Icr::ReplaySession do

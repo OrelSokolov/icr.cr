@@ -2,11 +2,13 @@
 
 module Icr::CLI
   def self.run : Nil
-    io = Icr.open_session
+    # --replay: force replay mode (crystal run), never touch the interpreter.
+    io = Icr.open_session(replay: ARGV.includes?("--replay"))
     editor = Icr::LineEditor.new(Icr::Completion::Index.default)
     history = [] of String
     mode = io.is_a?(Icr::LiveSession) ? "live interpreter" : "replay, ~2s/line"
     puts Icr.banner(mode)
+    Icr.warn_c_extensions if io.is_a?(Icr::LiveSession)
     loop do
       prompt = io.is_a?(Icr::LiveSession) && io.needs_continuation? ? "... > " : "icr> "
       line = editor.read_line(prompt, history)

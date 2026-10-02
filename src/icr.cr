@@ -26,7 +26,7 @@ require "./icr/completion"
 require "./icr/completion_index"
 
 module Icr
-  VERSION = "1.3.0"
+  VERSION = "1.4.0"
 
   # Where the live backend's compiler comes from, in order:
   #   1. ICR_CRYSTAL env var (explicit override)
@@ -55,7 +55,11 @@ module Icr
   # one is present. Env vars are read at call time: host apps can set
   # ENV["CRYSTAL_INTERPRETER_PATH"] (or ICR_CRYSTAL) in their own
   # code before calling this.
-  def self.open_session(cwd : String? = nil) : LiveSession | ReplaySession
+  #
+  # Pass replay: true to skip the interpreter entirely (the CLI's
+  # --replay flag): always a ReplaySession, no fallback warnings.
+  def self.open_session(cwd : String? = nil, replay : Bool = false) : LiveSession | ReplaySession
+    return ReplaySession.new if replay
     if bin = interpreter_bin
       begin
         return LiveSession.new(bin, cwd)
@@ -67,6 +71,14 @@ module Icr
       warn_no_interpreter
     end
     ReplaySession.new
+  end
+
+  # The `crystal i` interpreter cannot run C extensions: a call into one
+  # deadlocks the interpreter process. Only `.reset` (process restart)
+  # recovers the session; replay mode (`crystal run`) is unaffected.
+  def self.warn_c_extensions
+    msg = "WARNING: C extensions don't work in the interpreter — a call into one deadlocks it. Use .reset to recover; replay mode is unaffected."
+    STDERR.puts STDERR.tty? ? "\e[33m#{msg}\e[0m" : msg
   end
 
   private def self.warn_no_interpreter
