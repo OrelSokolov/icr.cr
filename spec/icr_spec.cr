@@ -101,6 +101,27 @@ describe Icr::ReplaySession do
   end
 end
 
+describe Icr::LiveSession do
+  # Regression shapes for #extract — no interpreter needed, so these run
+  # everywhere (the ConPTY one was first caught on Windows).
+  it "extracts the value from an openpty-shaped stream" do
+    raw = "\e[?25l\e[1G\e[Jicr:1> \e[35m2\e[39m \e[91m+\e[39m \e[35m2\e[39m\e[?25h\r\n => \e[35m4\e[39m\r\nicr:2> "
+    Icr::LiveSession.extract(raw).should eq("=> 4")
+  end
+
+  it "extracts the value when ConPTY defers the cursor-show past the marker" do
+    # conhost ends the frame AFTER " => ": the cursor-show lands between
+    # the marker and the value, so the last-\e[?25h cut loses "=> ".
+    raw = "\e[?25l\e[1G\e[Jicr:1> \e[35m2\e[39m \e[91m+\e[39m \e[35m2\e[39m\r\n => \e[?25h\e[35m4\e[39m\r\nicr:2> "
+    Icr::LiveSession.extract(raw).should eq("=> 4")
+  end
+
+  it "keeps program output before the value in the ConPTY fallback" do
+    raw = "\e[?25l\e[1G\e[Jicr:1> puts 7\r\n7\r\n => \e[?25h\e[35mnil\e[39m\r\nicr:2> "
+    Icr::LiveSession.extract(raw).should eq("7\n=> nil")
+  end
+end
+
 {% if flag?(:unix) || flag?(:windows) %}
   # Live specs need an interpreter-capable crystal (the same resolution
   # chain the CLI uses); replay-only environments skip the whole block.

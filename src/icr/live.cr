@@ -46,6 +46,7 @@ class Icr::LiveSession
 
   getter? needs_continuation : Bool = false
   getter history = [] of String
+  DEAD_MESSAGE = "interpreter exited"
 
   def live? : Bool
     true
@@ -90,7 +91,7 @@ class Icr::LiveSession
       full = @pending ? "#{@pending}\n#{line}" : line
       @pending = nil
       history << full
-      extract(raw)
+      LiveSession.extract(raw, @dead)
     end
   end
 
@@ -141,7 +142,7 @@ class Icr::LiveSession
   end
 
   private def dead_message : String
-    "interpreter exited"
+    DEAD_MESSAGE
   end
 
   private def start_process
@@ -266,22 +267,52 @@ class Icr::LiveSession
   # repaint (everything up to the last cursor-show escape), strip
   # ANSI/CR, drop the trailing prompt, split program stdout from the
   # "=> value" tail.
-  private def extract(raw : String) : String
+  #
+  # ConPTY caveat: conhost repackages the interpreter's writes into
+  # screen frames and may defer the editor's cursor-show escape to the
+  # END of a frame — landing between " => " and the value, so the cut
+  # at the last \e[?25h eats the marker. When that happens, re-parse
+  # the whole stream with escapes stripped: the marker is contiguous
+  # there, and the editor's echo is dropped by its prompt prefix.
+  def self.extract(raw : String, dead : Bool = false) : String
     text = raw.rindex("\e[?25h").try { |i| raw[(i + 6)..] } || raw
     text = text.gsub(ANSI_RE, "").gsub(OSC_RE, "").gsub("\r\n", "\n")
     text = text.sub(/(icr:\d+[>*] *)\z/, "")
-    return dead_message if text.empty? && @dead
+    return DEAD_MESSAGE if text.empty? && dead
 
     if idx = text.rindex("\n => ")
-      output = text[0...idx]
-      value = text[(idx + 5)..].strip
-      out = String.build do |io|
-        io << output.strip << '\n' unless output.strip.empty?
-        io << "=> " << value unless value.empty?
-      end
-      out.strip
+      format_result(text[0...idx], text[(idx + 5)..])
+    elsif whole = parse_whole_stream(raw)
+      whole
     else
       text.strip
     end
+  end
+
+  # Fallback parser for ConPTY-shaped streams (see #extract): normalize
+  # the WHOLE raw stream — not just the tail after the last cursor-show
+  # — find the "=> value" marker, and drop the editor's echo (everything
+  # up to the end of the last prompt-prefixed line before the marker).
+  private def self.parse_whole_stream(raw : String) : String?
+    text = raw.gsub(ANSI_RE, "").gsub(OSC_RE, "")
+      .gsub("\r\n", "\n").tr("\r", "").rstrip
+    text = text.sub(/(icr:\d+[>*] *)\z/, "")
+    idx = text.rindex("\n => ")
+    return nil unless idx
+
+    output = text[0...idx]
+    if prompt_at = output.rindex(/icr:\d+[>*]/)
+      line_end = output.index('\n', prompt_at)
+      output = line_end ? output[(line_end + 1)..] : ""
+    end
+    format_result(output, text[(idx + 5)..])
+  end
+
+  private def self.format_result(output : String, value : String) : String
+    value = value.strip
+    String.build do |io|
+      io << output.strip << '\n' unless output.strip.empty?
+      io << "=> " << value unless value.empty?
+    end.strip
   end
 end
