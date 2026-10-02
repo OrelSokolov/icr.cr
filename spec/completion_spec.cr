@@ -175,17 +175,15 @@ end
 describe "require_with_autocomplete (baked table)" do
   it "harvests roots and the class hierarchy at compile time" do
     root = File.expand_path("..", __DIR__)
-    dir = File.join(Dir.tempdir, "icr-ac-spec-#{Random::Secure.hex(4)}")
-    Dir.mkdir(dir)
+    # The fixture must require the repo's sources by RELATIVE path:
+    # Crystal's require treats them relative to the requiring file, and
+    # absolute paths break on Windows (drive letters) — so keep the
+    # scratch dir inside the gitignored build/ instead of Dir.tempdir.
+    dir = File.join(root, "build", "icr-ac-spec-#{Random::Secure.hex(4)}")
+    Dir.mkdir_p(dir)
     fixture = File.join(dir, "fixture.cr")
-    # Crystal resolves require paths only relative to the requiring file
-    # (or via CRYSTAL_PATH); on Windows the temp dir can live on a
-    # different drive, where no relative path exists — fall back to
-    # absolute require paths.
-    icr = Path.new(root, "src/icr")
-    math = Path.new(root, "examples/my_math")
-    icr_rel = (icr.relative_to?(dir) || icr).to_posix.to_s
-    math_rel = (math.relative_to?(dir) || math).to_posix.to_s
+    icr_rel = Path.new(root, "src/icr").relative_to?(dir).not_nil!.to_posix.to_s
+    math_rel = Path.new(root, "examples/my_math").relative_to?(dir).not_nil!.to_posix.to_s
     begin
       File.write(fixture, <<-SRC)
         require "#{icr_rel}"
