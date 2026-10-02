@@ -3,7 +3,7 @@
 An irb-style console for Crystal:
 
 ```
-⢀⡴⠊⢉⡟⢿  icr v1.0.0 - Crystal 1.21.0 - live interpreter
+⢀⡴⠊⢉⡟⢿  icr v1.1.0 - Crystal 1.21.0 - live interpreter
 ⣎⣀⣴⡋⡟⣻  "exit" to quit · ".program" session source · ".reset" clear
 ⣟⣼⣱⣽⣟⣾  ~/your/project
 icr> 2 + 2
@@ -24,14 +24,17 @@ icr> 2 + 2
   side effects (DB writes etc.) re-run on every submission.
 
 The backend is picked automatically: `ICR_CRYSTAL` env var →
+`CRYSTAL_INTERPRETER_PATH` env var →
 `~/.local/share/icr/crystal/bin/crystal` → `crystal` from PATH
-(usually falls through to replay).
+(usually falls through to replay). Both env vars are read directly
+from Crystal code (`ENV[...]?` in `Icr.interpreter_bin`) at startup.
 
 ## Usage
 
 ```sh
 bin/icr                          # or: crystal run src/cli.cr
 ICR_CRYSTAL=/path/to/crystal bin/icr
+CRYSTAL_INTERPRETER_PATH=/path/to/crystal bin/icr
 ```
 
 Commands inside the console:
@@ -48,15 +51,26 @@ with `\` to continue on the next one.
 
 ## As a library
 
-Both sessions share one interface, so you can embed the console into
-your own tooling (e.g. a GUI terminal widget):
+Both sessions share one interface, and `Icr.open_session` picks the
+best backend automatically — a live interpreter whenever one is
+available (same chain as the CLI: `ICR_CRYSTAL` →
+`CRYSTAL_INTERPRETER_PATH` → `~/.local/share/icr/…` → `crystal` on
+PATH), replay otherwise. Works identically when icr is installed as
+a shard into another app; the env vars are read from Crystal code at
+call time, so the host app can set them before opening a session.
 
 ```crystal
 require "icr"
 
-session = Icr::LiveSession.new(Icr.interpreter_bin.not_nil!)
-puts session.submit("2 + 2")   # => "=> 4"
+session = Icr.open_session          # live if available, replay otherwise
+puts session.submit("2 + 2")        # => "=> 4"
 session.close
+```
+
+To control the backend explicitly:
+
+```crystal
+session = Icr::LiveSession.new(Icr.interpreter_bin.not_nil!)
 ```
 
 ## Notes

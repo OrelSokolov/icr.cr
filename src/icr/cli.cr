@@ -1,28 +1,9 @@
 # CLI driver for the icr console.
 
 module Icr::CLI
-  private def self.warn_slow
-    msg = "WARNING: no interpreter found — running in replay mode (~2s per line).\n" \
-          "Run `rake interpreter` (or scripts/build-interpreter.sh) once for instant answers."
-    STDERR.puts STDERR.tty? ? "\e[31m#{msg}\e[0m" : msg
-  end
-
   def self.run : Nil
-    live : Icr::LiveSession?
-    mode = "replay, ~2s/line"
-    if bin = Icr.interpreter_bin
-      begin
-        live = Icr::LiveSession.new(bin)
-        mode = "live interpreter"
-      rescue ex
-        warn_slow
-        STDERR.puts "live mode unavailable (#{ex.message})"
-        live = nil
-      end
-    else
-      warn_slow
-    end
-    io = (live || Icr::ReplaySession.new).as(Icr::LiveSession | Icr::ReplaySession)
+    io = Icr.open_session
+    mode = io.is_a?(Icr::LiveSession) ? "live interpreter" : "replay, ~2s/line"
     puts Icr.banner(mode)
     loop do
       print io.is_a?(Icr::LiveSession) && io.needs_continuation? ? "... > " : "icr> "

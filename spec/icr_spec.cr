@@ -22,6 +22,33 @@ describe Icr do
       Icr.interpreter_bin.should be_nil
     end
   end
+
+  it "falls back to CRYSTAL_INTERPRETER_PATH when ICR_CRYSTAL is unset" do
+    with_env("CRYSTAL_INTERPRETER_PATH", "/bin/sh") do
+      Icr.interpreter_bin.should eq("/bin/sh")
+    end
+  end
+
+  it "returns nil for a missing CRYSTAL_INTERPRETER_PATH" do
+    with_env("CRYSTAL_INTERPRETER_PATH", "/nonexistent-crystal") do
+      Icr.interpreter_bin.should be_nil
+    end
+  end
+
+  it "prefers ICR_CRYSTAL over CRYSTAL_INTERPRETER_PATH" do
+    with_env("ICR_CRYSTAL", "/bin/sh") do
+      with_env("CRYSTAL_INTERPRETER_PATH", "/nonexistent-crystal") do
+        Icr.interpreter_bin.should eq("/bin/sh")
+      end
+    end
+  end
+
+  it "open_session falls back to ReplaySession when no interpreter exists" do
+    with_env("ICR_CRYSTAL", "/nonexistent-crystal") do
+      session = Icr.open_session
+      session.should be_a(Icr::ReplaySession)
+    end
+  end
 end
 
 describe Icr::ReplaySession do

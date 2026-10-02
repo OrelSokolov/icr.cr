@@ -23,15 +23,17 @@ require "./icr/live"
 require "./icr/replay"
 
 module Icr
-  VERSION = "1.0.0"
+  VERSION = "1.1.0"
 
   # Where the live backend's compiler comes from, in order:
   #   1. ICR_CRYSTAL env var (explicit override)
-  #   2. ~/.local/share/icr/crystal/bin/crystal (scripts/build-interpreter.sh)
-  #   3. `crystal` from PATH (usually lacks interpreter support; the
+  #   2. CRYSTAL_INTERPRETER_PATH env var (checked from Crystal code
+  #      at startup via ENV — no Rakefile needed)
+  #   3. ~/.local/share/icr/crystal/bin/crystal (scripts/build-interpreter.sh)
+  #   4. `crystal` from PATH (usually lacks interpreter support; the
   #      CLI then falls back to replay mode)
   def self.interpreter_bin : String?
-    if env = ENV["ICR_CRYSTAL"]?
+    if env = ENV["ICR_CRYSTAL"]? || ENV["CRYSTAL_INTERPRETER_PATH"]?
       return File.exists?(env) ? env : nil
     end
 
@@ -40,6 +42,34 @@ module Icr
     return local if File.exists?(local)
 
     "crystal"
+  end
+
+  # Library-friendly entry point: open the best available session —
+  # a LiveSession when interpreter_bin resolved to an interpreter-
+  # capable crystal (env vars → ~/.local/share/icr → PATH), a
+  # ReplaySession otherwise. This is the same logic the CLI uses, so
+  # shard consumers always get the live interpreter by default when
+  # one is present. Env vars are read at call time: host apps can set
+  # ENV["CRYSTAL_INTERPRETER_PATH"] (or ICR_CRYSTAL) in their own
+  # code before calling this.
+  def self.open_session(cwd : String? = nil) : LiveSession | ReplaySession
+    if bin = interpreter_bin
+      begin
+        return LiveSession.new(bin, cwd)
+      rescue ex
+        warn_no_interpreter
+        STDERR.puts "live mode unavailable (#{ex.message})"
+      end
+    else
+      warn_no_interpreter
+    end
+    ReplaySession.new
+  end
+
+  private def self.warn_no_interpreter
+    msg = "WARNING: no interpreter found — running in replay mode (~2s per line).\n" \
+          "Run `rake interpreter` (or scripts/build-interpreter.sh) once for instant answers."
+    STDERR.puts STDERR.tty? ? "\e[31m#{msg}\e[0m" : msg
   end
 
   # irb-style braille banner: the art is tinted blue, the text stays in
