@@ -10,7 +10,9 @@ desc "Build a local Crystal compiler WITH interpreter support " \
      "(~/.local/share/icr; skipped when already present)"
 task :interpreter do
   if File.exist?(INTERPRETER)
-    puts "interpreter already present: #{INTERPRETER}"
+    green = $stdout.tty? ? "\e[32m" : ""
+    reset = $stdout.tty? ? "\e[0m" : ""
+    puts "#{green}Using interpreter #{INTERPRETER}#{reset}"
   else
     # Official Linux builds ship without the interpreter, so we compile
     # one from the Crystal sources ourselves. First run takes a while.
