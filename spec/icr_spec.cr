@@ -95,6 +95,61 @@ describe Icr::ReplaySession do
   end
 end
 
+# Live specs need an interpreter-capable crystal (the same resolution
+# chain the CLI uses); replay-only environments skip the whole block.
+def live_interpreter_available? : Bool
+  bin = Icr.interpreter_bin
+  return false unless bin
+  session = Icr::LiveSession.new(bin)
+  session.close
+  true
+rescue Icr::LiveSession::Error
+  false
+end
+
+if live_interpreter_available?
+  describe Icr::LiveSession do
+    it "evaluates lines and returns irb-style values" do
+      session = Icr::LiveSession.new(Icr.interpreter_bin.not_nil!)
+      begin
+        session.submit("2 + 2").should contain("=> 4")
+      ensure
+        session.close
+      end
+    end
+
+    it "continues incomplete expressions and keeps state" do
+      session = Icr::LiveSession.new(Icr.interpreter_bin.not_nil!)
+      begin
+        session.submit("def f(x)").should eq("")
+        session.needs_continuation?.should be_true
+        session.submit("  x * 2").should eq("")
+        session.needs_continuation?.should be_true
+        session.submit("end")
+        session.needs_continuation?.should be_false
+        session.submit("f(21)").should contain("=> 42")
+      ensure
+        session.close
+      end
+    end
+
+    it "detects completion by the prompt tail, not a silence window" do
+      # Regression: the old heuristic paid a fixed ~0.15s+ per line on
+      # top of the interpreter's own time, and continuation lines hit
+      # the 30s deadline because the redraw arrives late.
+      session = Icr::LiveSession.new(Icr.interpreter_bin.not_nil!)
+      begin
+        session.submit("1 + 1") # warm up: first line compiles primitives
+        started = Time.instant
+        session.submit("20 + 22").should contain("=> 42")
+        (Time.instant - started).total_seconds.should be < 1.0
+      ensure
+        session.close
+      end
+    end
+  end
+end
+
 describe Icr::LineEditor do
   it "picks the basic editor when stdin is not a TTY" do
     STDIN.tty?.should be_false # specs run with piped/closed stdin

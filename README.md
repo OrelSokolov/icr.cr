@@ -3,18 +3,21 @@
 An irb-style console for Crystal:
 
 ```
-⢀⡴⠊⢉⡟⢿  icr v1.4.0 - Crystal 1.21.0 - live interpreter
+⢀⡴⠊⢉⡟⢿  icr v1.5.0 - Crystal 1.21.0 - live interpreter
 ⣎⣀⣴⡋⡟⣻  "exit" to quit · ".program" session source · ".reset" clear
 ⣟⣼⣱⣽⣟⣾  ~/your/project
 icr> 2 + 2
 => 4
-# 0.2s
+# 0.1s
 ```
 
 ## Two backends
 
 - **live** — a persistent `crystal i` interpreter process driven over a
-  PTY: real in-process state, ~0.1–0.5s per line. Official Linux
+  PTY: real in-process state, ~0.1s per line (completion is detected
+  from the prompt at the stream tail — see `src/icr/live.cr` — not a
+  fixed silence window, so the wrapper adds only a ~30ms grace on top
+  of the interpreter's own time). Official Linux
   Crystal builds ship **without** interpreter support, so run
   `scripts/build-interpreter.sh` once to build a local compiler with
   `interpreter=1` into `~/.local/share/icr/` (nothing system-wide).
@@ -117,6 +120,18 @@ session = Icr.open_session(replay: true)   # force replay (the CLI's --replay)
 
 ## Notes
 
+- **Why a PTY wrapper instead of embedding the interpreter?** The
+  interpreter *is* available as a library (`Crystal::Repl` in the
+  compiler sources), but embedding it would pull the entire Crystal
+  compiler and LLVM into every program that uses icr — your own
+  project would then recompile the compiler (minutes, huge binary) on
+  every build and be pinned to one exact Crystal version. Driving the
+  already-built `crystal i` binary over a PTY keeps your project's
+  builds completely untouched: icr is a plain dependency, and the
+  interpreter is built once, separately (`scripts/build-interpreter.sh`).
+  The PTY is also the only supported interface — `crystal i` has no
+  machine protocol, and piping stdin without a TTY silently swallows
+  results.
 - Live backend: Linux and macOS (openpty via libutil; the interpreter
   builds from Crystal sources on both — see `scripts/build-interpreter.sh`).
   macOS is untested in this repo; on Windows there is no openpty, so icr
