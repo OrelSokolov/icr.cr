@@ -44,10 +44,42 @@ Commands inside the console:
 | `.program`  | print the session source so far          |
 | `.reset`    | drop state (live: restart the process)   |
 | `.exit` / `exit` / Ctrl+D | quit                       |
+| `Tab`       | autocomplete from the baked table        |
+| `Ctrl-T`    | fuzzy search over the baked table        |
 
 An incomplete line (`def f`, open blocks…) continues with `... >`
 prompts until the expression is complete. In replay mode, end a line
 with `\` to continue on the next one.
+
+## Autocomplete (baked at compile time)
+
+When the whole program (icr included) is compiled, a macro harvest
+(`src/icr/completion.cr`) walks the type graph and "bakes" a TSV table
+of types, methods and constants into the binary — `Icr::Completion::TABLE`.
+The standalone `bin/icr` opts in itself (stdlib + icr), so Tab completes
+`Str` → `String`, `String.bu` → `String.build…`, and Ctrl-T opens a
+fuzzy-search overlay over every method.
+
+Host apps that use icr as a library opt in with `require_with_autocomplete`,
+which is a plain `require` plus namespace roots:
+
+```crystal
+require "icr"
+require_with_autocomplete "./my_math", MyMath
+```
+
+Classes and structs anywhere in the program are harvested automatically;
+modules and enums are invisible to `Object.all_subclasses`, so list them
+explicitly as roots. Programs that never opt in get an empty table —
+zero cost.
+
+Known limits (see `plans/autocomplete.md` for the full analysis):
+
+- The table is a build-time snapshot: types defined *later inside the
+  session* are not completed.
+- Only literal type names are completed after `.` (`MyMath.sq<Tab>`),
+  not variables — the host process can't know a variable's runtime type.
+
 
 ## As a library
 
@@ -61,6 +93,7 @@ call time, so the host app can set them before opening a session.
 
 ```crystal
 require "icr"
+require_with_autocomplete "./my_math", MyMath
 
 session = Icr.open_session          # live if available, replay otherwise
 puts session.submit("2 + 2")        # => "=> 4"

@@ -9,14 +9,18 @@
 # so MyMath is available from the first prompt. MyMath lives in a
 # real file the host program can require as usual; the session
 # requires the same file via the relative path.
+#
+# require_with_autocomplete additionally bakes MyMath into the
+# completion table, so Tab/Ctrl-T know about it (classes and structs
+# are harvested automatically; modules need to be listed as roots).
 
 require "../src/icr"
-require "./my_math" # host side can use it directly too
+require_with_autocomplete "./my_math", MyMath
 
 io = Icr.open_session(__DIR__)
 io.submit(%(require "./my_math")) # preload into the session
 
-editor = Icr::LineEditor.new
+editor = Icr::LineEditor.new(Icr::Completion::Index.default)
 history = [] of String
 mode = io.is_a?(Icr::LiveSession) ? "live interpreter" : "replay, ~2s/line"
 puts Icr.banner(mode)

@@ -22,9 +22,11 @@ require "./icr/pty"
 require "./icr/live"
 require "./icr/replay"
 require "./icr/editor"
+require "./icr/completion"
+require "./icr/completion_index"
 
 module Icr
-  VERSION = "1.2.0"
+  VERSION = "1.3.0"
 
   # Where the live backend's compiler comes from, in order:
   #   1. ICR_CRYSTAL env var (explicit override)
@@ -78,7 +80,7 @@ module Icr
   def self.banner(mode : String) : String
     art = {"⢀⡴⠊⢉⡟⢿", "⣎⣀⣴⡋⡟⣻", "⣟⣼⣱⣽⣟⣾"}
     text = {"icr v#{VERSION} - Crystal #{Crystal::VERSION} - #{mode}",
-            %("exit" to quit · ".program" session source · ".reset" clear),
+            %("exit" to quit · ".program" source · ".reset" clear · Tab complete · ^T search),
             Dir.current}
     tty = STDOUT.tty?
     String.build do |io|

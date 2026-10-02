@@ -26,11 +26,13 @@ abstract class Icr::LineEditor
   end
 
   # The adapter for this platform and input: an interactive editor
-  # when stdin is a TTY, a plain gets otherwise.
-  def self.new : LineEditor
+  # when stdin is a TTY, a plain gets otherwise. `completion` (when
+  # given) powers Tab completion and the Ctrl-T search overlay in the
+  # interactive adapter; the basic one ignores it.
+  def self.new(completion : Icr::Completion::Index? = nil) : LineEditor
     if STDIN.tty?
       {% if flag?(:unix) %}
-        UnixLineEditor.new
+        UnixLineEditor.new(STDIN, STDOUT, completion)
       {% else %}
         BasicLineEditor.new
       {% end %}
@@ -58,6 +60,8 @@ enum Icr::Key
   Delete
   CtrlC
   CtrlD
+  CtrlT
+  Tab
   Up
   Down
   Left
@@ -86,6 +90,8 @@ class Icr::KeyParser
     when 127, 8 then {Icr::KeyEvent.new(Icr::Key::Backspace), 1}
     when 3      then {Icr::KeyEvent.new(Icr::Key::CtrlC), 1}
     when 4      then {Icr::KeyEvent.new(Icr::Key::CtrlD), 1}
+    when 9      then {Icr::KeyEvent.new(Icr::Key::Tab), 1}
+    when 20     then {Icr::KeyEvent.new(Icr::Key::CtrlT), 1}
     when 27
       parse_escape(bytes)
     else
@@ -211,6 +217,13 @@ class Icr::EditState
     @cursor += 1
   end
 
+  # Insert a whole chunk of text at the cursor (completion results).
+  def insert_text(text : String) : Nil
+    return if text.empty?
+    @buffer = buffer.insert(@cursor, text)
+    @cursor += text.size
+  end
+
   private def backspace : Nil
     return if @cursor.zero?
     @buffer = buffer[0...@cursor - 1] + buffer[@cursor..]
@@ -245,7 +258,8 @@ end
   # EditState mutated per event, prompt + buffer repainted after each
   # key (cursor parked back where EditState says it belongs).
   class Icr::UnixLineEditor < Icr::LineEditor
-    def initialize(@input : IO::FileDescriptor = STDIN, @output : IO = STDOUT)
+    def initialize(@input : IO::FileDescriptor = STDIN, @output : IO = STDOUT,
+                   @index : Icr::Completion::Index? = nil)
     end
 
     # Bytes read but not yet parsed — a paste can deliver several
@@ -337,6 +351,10 @@ end
           else
             return state.buffer
           end
+        when .tab?
+          complete(prompt, state)
+        when .ctrl_t?
+          run_search(prompt, state)
         else
           state.handle(event)
           render(prompt, state)
@@ -352,6 +370,87 @@ end
         bytes.replace(bytes[consumed..])
         return event if event # Unknown events are dropped by parse callers
       end
+    end
+
+    # Tab: complete the token before the cursor from the baked table.
+    # Unambiguous → insert the remainder of the candidate; ambiguous
+    # with a shared prefix → insert the prefix; ambiguous without
+    # progress → list the candidates under the line (irb-style).
+    private def complete(prompt : String, state : EditState) : Nil
+      index = @index
+      return unless index
+
+      insert, cands = Icr::Completion::Completer.complete(state.buffer, state.cursor, index)
+      state.insert_text(insert) unless insert.empty?
+      if cands.size > 1 && insert.empty?
+        @output.print "\r\n"
+        @output.print cands.first(48).join("  ") + "\e[K\r\n"
+      end
+      render(prompt, state)
+    end
+
+    SEARCH_ROWS = 11 # query row + 10 result rows, lifted on every redraw
+
+    # Ctrl-T overlay: fuzzy search over the baked table (see
+    # Completion::Index#search). ↑/↓ select, Enter inserts into the
+    # main line, Ctrl-C/Ctrl-D cancel.
+    private def run_search(prompt : String, state : EditState) : Nil
+      index = @index
+      return unless index
+
+      query = EditState.new([] of String)
+      parser = KeyParser.new
+      bytes = [] of UInt8
+      chunk = uninitialized UInt8[256]
+      selected = 0
+      lifted = false
+
+      loop do
+        hits = index.search(query.buffer, 10)
+        selected = hits.empty? ? 0 : selected.clamp(0, hits.size - 1)
+        draw_search(prompt, state, query, hits, selected, lifted)
+        lifted = true
+
+        read = @input.read(chunk.to_slice)
+        if read == 0 # EOF — cancel
+          @output.print "\r\n"
+          return render(prompt, state)
+        end
+        bytes.concat(chunk.to_slice[0, read].to_a)
+
+        while event = next_event(parser, bytes)
+          case event.key
+          when .enter?
+            @output.print "\r\n"
+            state.insert_text(hits[selected].insert) if hits[selected]?
+            return render(prompt, state)
+          when .ctrl_c?, .ctrl_d?
+            @output.print "\r\n"
+            return render(prompt, state)
+          when .up?   then selected -= 1
+          when .down? then selected += 1
+          else
+            query.handle(event)
+          end
+        end
+      end
+    end
+
+    private def draw_search(prompt : String, state : EditState, query : EditState,
+                            hits : Array(Icr::Completion::Hit), selected : Int32,
+                            lifted : Bool) : Nil
+      # \e[NF homes the cursor N lines up; \e[J wipes the old overlay.
+      @output.print "\e[#{SEARCH_ROWS}F\e[J" if lifted
+      @output.print "  search: #{query.buffer}  (↑↓ select · Enter insert · ^C cancel)\e[K\r\n"
+      10.times do |i|
+        if hit = hits[i]?
+          marker = i == selected ? "›" : " "
+          @output.print "  #{marker} #{hit.label}\e[K\r\n"
+        else
+          @output.print "\e[K\r\n"
+        end
+      end
+      render(prompt, state)
     end
 
     private def render(prompt : String, state : EditState) : Nil

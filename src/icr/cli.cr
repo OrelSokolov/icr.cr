@@ -3,7 +3,7 @@
 module Icr::CLI
   def self.run : Nil
     io = Icr.open_session
-    editor = Icr::LineEditor.new
+    editor = Icr::LineEditor.new(Icr::Completion::Index.default)
     history = [] of String
     mode = io.is_a?(Icr::LiveSession) ? "live interpreter" : "replay, ~2s/line"
     puts Icr.banner(mode)
