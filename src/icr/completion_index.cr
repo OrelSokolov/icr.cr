@@ -75,6 +75,33 @@ module Icr::Completion
       names.uniq.sort!
     end
 
+    # Methods callable as `type.name(...)`: self-methods always, plus —
+    # for MODULES — the module-level defs, which the harvest bakes as
+    # 'i' entries (`def sin` inside `module Math` is called Math.sin).
+    # Class/struct 'i' entries are instance methods and never apply.
+    def dot_method_names(type : String) : Array(String)
+      is_module = type?(type) == "module"
+      names = [] of String
+      entries[type]?.try &.each do |e|
+        names << e.name if e.kind == 's' || (is_module && e.kind == 'i')
+      end
+      names.uniq.sort!
+    end
+
+    # Types nested under a namespace: "Math" → the tails after "Math::".
+    # The bake stores nested types under their full path names.
+    def nested_type_names(namespace : String) : Array(String)
+      prefix = "#{namespace}::"
+      types.keys.select(&.starts_with?(prefix)).map { |k| k[prefix.size..] }.sort!
+    end
+
+    # Top-level defs (puts, sleep, rand…), baked under an empty owner.
+    def top_level_method_names : Array(String)
+      names = [] of String
+      entries[""]?.try &.each { |e| names << e.name if e.kind == 'i' }
+      names.uniq.sort!
+    end
+
     # Constant (and nested type) names on `type` — `Math.` → PI, E.
     def constant_names(type : String) : Array(String)
       (constants[type]? || [] of String).uniq.sort!
@@ -121,7 +148,9 @@ module Icr::Completion
         entries.each do |owner, list|
           list.each do |e|
             call = e.args.empty? ? "#{e.name}()" : "#{e.name}(#{e.args})"
-            if e.kind == 's'
+            if owner.empty? # top-level defs: no owner prefix
+              pool << Hit.new(call, "#{e.name}(")
+            elsif e.kind == 's'
               pool << Hit.new("#{owner}.#{call}", "#{owner}.#{e.name}(")
             else
               pool << Hit.new("#{owner}##{call}", "#{e.name}(")
@@ -147,32 +176,49 @@ module Icr::Completion
   # candidates remain ambiguous. The editor renders the result.
   module Completer
     KEYWORDS = %w[def end class module struct enum require include
-                  puts pp p print exit record property]
+                  record property]
 
-    # Two shapes are completed:
-    #   "MyMath.sq|"  → self-methods + constants of the type MyMath
-    #   "MyMa|"       → type names (+ a few keywords)
-    # Returns {insert, candidates}: `insert` is the remainder of the
-    # candidates' common prefix beyond the typed fragment ("" when the
-    # prefix adds nothing); `candidates` is the filtered list to show.
+    # Three shapes are completed:
+    #   "MyMath::P|"  → constants + nested types of MyMath (Math::PI)
+    #   "MyMath.sq|"  → methods callable on the type (Math.sin, File.exists?)
+    #   "sl|"         → top-level methods + Object methods + types + keywords
+    # Bare words complete to what's actually callable at the top level:
+    # global defs (puts, sleep…) and Object instance methods — NOT every
+    # stdlib method (bare `sqrt` isn't Crystal; that's Math.sqrt, and
+    # Ctrl-T searches every method in the table).
     def self.complete(buffer : String, cursor : Int32, index : Index) : {String, Array(String)}
       before = buffer[0...Math.min(cursor, buffer.size)]
       frag = nil
 
-      if match = before.match(/([\w:]+)\.(\w*)\z/)
+      if match = before.match(/([\w:]+)::(\w*)\z/)
+        namespace, frag = match[1], match[2]
+        # Constants need the namespace itself in the table; nested types
+        # don't — the harvest often skips the bare module (only roots and
+        # ancestors are baked) while keeping its nested types.
+        tails = index.nested_type_names(namespace)
+        if index.type?(namespace)
+          tails += index.constant_names(namespace)
+        elsif tails.empty?
+          return {"", [] of String}
+        end
+        tails = tails.uniq.select(&.starts_with?(frag)).sort!
+        cands = tails.map { |t| "#{namespace}::#{t}" }
+        {common_prefix(cands, match[0].size), cands}
+      elsif match = before.match(/([\w:]+)\.(\w*)\z/)
         receiver, frag = match[1], match[2]
         return {"", [] of String} unless index.type?(receiver)
-        cands = (index.self_method_names(receiver) + index.constant_names(receiver))
-                  .uniq.select(&.starts_with?(frag)).sort!
+        cands = index.dot_method_names(receiver).select(&.starts_with?(frag))
+        {common_prefix(cands, frag.size), cands}
       elsif match = before.match(/((?:\w+::)*\w+)\z/)
         frag = match[1]
-        cands = (index.completions(frag) + KEYWORDS.select(&.starts_with?(frag)))
+        cands = (index.completions(frag) + KEYWORDS.select(&.starts_with?(frag)) +
+                 index.top_level_method_names.select(&.starts_with?(frag)) +
+                 index.member_names("Object").select(&.starts_with?(frag)))
                   .uniq.sort!
+        {common_prefix(cands, frag.size), cands}
       else
         return {"", [] of String}
       end
-
-      {common_prefix(cands, frag.size), cands}
     end
 
     # The part of the candidates' common prefix past the typed fragment.
@@ -185,6 +231,22 @@ module Icr::Completion
         end
       end
       prefix.size <= frag_size ? "" : prefix[frag_size..]
+    end
+
+    # The typed tail being completed at the cursor — the text a dialog
+    # candidate extends: the full "Namespace::frag" path (candidates
+    # are full paths), the method fragment after "receiver.", or the
+    # plain word fragment. Nil when the cursor isn't on completable
+    # input (dialog closes then).
+    def self.fragment(buffer : String, cursor : Int32) : String?
+      before = buffer[0...Math.min(cursor, buffer.size)]
+      if match = before.match(/([\w:]+)::(\w*)\z/)
+        match[0]
+      elsif match = before.match(/([\w:]+)\.(\w*)\z/)
+        match[2]
+      elsif match = before.match(/((?:\w+::)*\w+)\z/)
+        match[1]
+      end
     end
   end
 end

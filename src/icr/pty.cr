@@ -14,3 +14,17 @@ lib Icr::LibPty
   fun openpty(amaster : Int32*, aslave : Int32*, name : UInt8*,
               termios : Void*, win : Winsize*) : Int32
 end
+
+# Terminal size query — Crystal's LibC doesn't bind ioctl or
+# TIOCGWINSZ. The request argument is unsigned long (UInt64 on LP64);
+# the constant differs between Linux and the BSDs/macOS.
+@[Link("c")]
+lib Icr::LibIoctl
+  {% if flag?(:darwin) || flag?(:bsd) %}
+    TIOCGWINSZ = 0x40087468
+  {% else %}
+    TIOCGWINSZ = 0x5413
+  {% end %}
+
+  fun ioctl(fd : Int32, request : UInt64, ...) : Int32
+end

@@ -185,6 +185,78 @@ describe "syntax highlighting" do
   end
 end
 
+describe Icr::Completion::Completer do
+  it "extracts the fragment being completed at the cursor" do
+    fixture = [
+      "T\tMyMath\tmodule",
+      "M\tMyMath\ts\tsquare\tx : Int32\tInt32",
+      "C\tMyMath\tPI",
+    ].join("\n")
+    index = Icr::Completion::Index.new(fixture)
+
+    Icr::Completion::Completer.fragment("MyMath.sq", 9).should eq("sq")
+    Icr::Completion::Completer.fragment("MyMa", 4).should eq("MyMa")
+    Icr::Completion::Completer.fragment("x + ", 4).should be_nil
+  end
+end
+
+describe Icr::CompletionDialog do
+  fixture = [
+    "T\tMyMath\tmodule",
+    "M\tMyMath\ts\tsquare\tx : Int32\tInt32",
+    "C\tMyMath\tPI",
+  ].join("\n")
+  index = Icr::Completion::Index.new(fixture)
+
+  many = (1..15).join('\n') { |i| "T\tThing#{i.to_s.rjust(2, '0')}\tclass" }
+  big_index = Icr::Completion::Index.new(many)
+
+  it "opens with candidates for the token before the cursor" do
+    dialog = Icr::CompletionDialog.new
+    dialog.update("MyMa", 4, index)
+    dialog.active?.should be_true
+    dialog.candidates.should contain("MyMath")
+    dialog.update("MyMath.", 7, index)
+    dialog.candidates.should eq(["square"]) # methods after the dot, not constants
+    dialog.update("MyMath::P", 8, index)
+    dialog.candidates.should eq(["MyMath::PI"]) # constants behind ::
+  end
+
+  it "moves the selection and scrolls to keep it visible" do
+    dialog = Icr::CompletionDialog.new
+    dialog.update("Thing", 5, big_index)
+    dialog.candidates.size.should eq(15)
+    10.times { dialog.move(1) }
+    dialog.selected.should eq(10)
+    dialog.offset.should eq(1)
+    labels, selected = dialog.visible
+    labels.size.should eq(Icr::CompletionDialog::ROWS)
+    selected.should eq(9)
+    labels[selected].should eq("Thing11")
+    20.times { dialog.move(-1) } # no wrap — stops at the top
+    dialog.selected.should eq(0)
+    dialog.offset.should eq(0)
+  end
+
+  it "stays dismissed until the input before the cursor changes" do
+    dialog = Icr::CompletionDialog.new
+    dialog.update("MyMa", 4, index)
+    dialog.dismiss("MyMa", 4)
+    dialog.active?.should be_false
+    dialog.update("MyMa", 4, index) # same context: stays hidden
+    dialog.active?.should be_false
+    dialog.update("MyMat", 5, index) # more typing: reopens
+    dialog.active?.should be_true
+  end
+
+  it "closes when the cursor leaves completable input" do
+    dialog = Icr::CompletionDialog.new
+    dialog.update("MyMa", 4, index)
+    dialog.update("MyMath + ", 9, index)
+    dialog.active?.should be_false
+  end
+end
+
 describe Icr::KeyParser do
   it "parses plain chars, Enter and Backspace" do
     parser = Icr::KeyParser.new
@@ -211,9 +283,11 @@ describe Icr::KeyParser do
     consumed.should eq(3)
   end
 
-  it "asks for more bytes on an incomplete escape sequence" do
+  it "treats a lone \\e as Escape, waits for more bytes on \\e[ alone" do
     parser = Icr::KeyParser.new
-    parser.parse_one([27_u8])[1].should eq(0)
+    event, consumed = parser.parse_one([27_u8])
+    event.not_nil!.key.escape?.should be_true
+    consumed.should eq(1)
     parser.parse_one("\e[".bytes)[1].should eq(0)
   end
 

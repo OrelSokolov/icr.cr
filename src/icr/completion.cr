@@ -99,6 +99,25 @@ macro finished
     {% end %}
 
     {% lines = [] of Nil %}
+    # Top-level defs (puts, sleep, rand…) live on the Program type,
+    # which the class walk never visits — harvest them under an empty
+    # owner so bare-word completion can offer them.
+    {% for m in @type.methods %}
+      {% if m.visibility.stringify == ":public" && m.name.stringify =~ /\A[A-Za-z_]\w*[?!=]?\z/ && m.name.stringify != "initialize" %}
+        {% argstr = "" %}
+        {% for a in m.args %}
+          {% piece = a.name.stringify %}
+          {% if a.restriction.stringify != "" %}
+            {% piece = piece + " : " + a.restriction.stringify %}
+          {% end %}
+          {% if a.default_value.stringify != "" %}
+            {% piece = piece + " = " + a.default_value.stringify %}
+          {% end %}
+          {% argstr = argstr == "" ? piece : argstr + ", " + piece %}
+        {% end %}
+        {% lines << "M\t\ti\t" + m.name.stringify + "\t" + argstr + "\t" + m.return_type.stringify %}
+      {% end %}
+    {% end %}
     {% for t in types %}
       {% base = t.name.stringify.split("(").first %}
       {% if base =~ /\A[A-Za-z_]\w*(::[A-Za-z_]\w*)*\z/ %}

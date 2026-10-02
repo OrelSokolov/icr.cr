@@ -63,6 +63,7 @@ enum Icr::Key
   CtrlC
   CtrlD
   CtrlT
+  Escape
   Tab
   Up
   Down
@@ -108,7 +109,9 @@ class Icr::KeyParser
   end
 
   private def parse_escape(bytes : Array(UInt8)) : {Icr::KeyEvent?, Int32}
-    return {nil, 0} if bytes.size < 2 # rest of the sequence not here yet
+    # A lone \e buffered with nothing after it is a real Esc press —
+    # CSI/SS3 sequences arrive as one chunk, so they never sit alone.
+    return {Icr::KeyEvent.new(Icr::Key::Escape), 1} if bytes.size == 1
 
     case bytes[1]
     when 91  then parse_csi(bytes) # '['
@@ -255,6 +258,74 @@ class Icr::EditState
   end
 end
 
+# IRB/reline-style candidate menu: the filtered candidate list for the
+# token before the cursor, a scrollable window of ROWS visible rows and
+# a moving selection. Pure state — the editor renders it. A dismissed
+# dialog stays hidden until the input before the cursor changes.
+class Icr::CompletionDialog
+  ROWS = 10
+
+  getter candidates = [] of String
+  getter selected = 0
+  getter offset = 0
+
+  @hidden_for : String? = nil
+
+  def active? : Bool
+    !candidates.empty?
+  end
+
+  # Recompute the candidate list from the token before the cursor.
+  # Selection and scroll reset only when the list actually changes, so
+  # cursor moves don't yank the selection back to the top.
+  def update(buffer : String, cursor : Int32, index : Icr::Completion::Index?) : Nil
+    before = buffer[0...Math.min(cursor, buffer.size)]
+    if before == @hidden_for
+      @candidates.clear
+      return
+    end
+    @hidden_for = nil
+
+    cands = if index
+              Icr::Completion::Completer.complete(before, before.size, index).last
+            else
+              [] of String
+            end
+    unless cands == @candidates
+      @candidates = cands
+      @selected = 0
+      @offset = 0
+    end
+  end
+
+  # Esc: hide for the current context; more typing reopens the dialog.
+  def dismiss(buffer : String, cursor : Int32) : Nil
+    @hidden_for = buffer[0...Math.min(cursor, buffer.size)]
+    @candidates.clear
+    @selected = 0
+    @offset = 0
+  end
+
+  # ↑/↓: move the selection, scrolling the window to keep it visible.
+  # No wrap — stops at either end like reline.
+  def move(delta : Int32) : Nil
+    return if candidates.empty?
+    @selected = (@selected + delta).clamp(0, candidates.size - 1)
+    if @selected < @offset
+      @offset = @selected
+    elsif @selected >= @offset + ROWS
+      @offset = @selected - ROWS + 1
+    end
+  end
+
+  # The visible window and the selection's position inside it (-1 when
+  # nothing is selected — impossible while active, but keeps render
+  # total).
+  def visible : {Array(String), Int32}
+    {candidates[offset, Math.min(ROWS, candidates.size - offset)], selected - offset}
+  end
+end
+
 {% if flag?(:unix) %}
   # Unix adapter: termios raw mode, chunked reads fed through KeyParser,
   # EditState mutated per event, prompt + buffer repainted after each
@@ -270,18 +341,20 @@ end
     @pending = [] of UInt8
     @raw = false
     @eof = false
+    @dialog_drawn = 0 # dialog rows currently on screen (for wipe on submit)
     @saved = uninitialized LibC::Termios
 
     def read_line(prompt : String, history : Array(String)) : String?
       enter_raw
       @eof = false
       state = EditState.new(history)
+      dialog = CompletionDialog.new
       parser = KeyParser.new
       chunk = uninitialized UInt8[256]
 
       render(prompt, state)
       # Leftover from a previous multi-line paste, if any.
-      if result = process(parser, @pending, state, prompt)
+      if result = process(parser, @pending, state, prompt, dialog)
         return @eof ? nil : result
       end
       loop do
@@ -294,7 +367,7 @@ end
         end
         @pending.concat(chunk.to_slice[0, read].to_a)
 
-        if result = process(parser, @pending, state, prompt)
+        if result = process(parser, @pending, state, prompt, dialog)
           return @eof ? nil : result
         end
       end
@@ -331,21 +404,26 @@ end
     # terminator shows up. Returns the finished line, or nil to keep
     # reading.
     private def process(parser : KeyParser, bytes : Array(UInt8),
-                        state : EditState, prompt : String) : String?
+                        state : EditState, prompt : String,
+                        dialog : CompletionDialog) : String?
       while event = next_event(parser, bytes)
         case event.key
         when .enter?
           # Raw mode: no OPOST, so the newline needs its own \r or the
-          # next output starts mid-column.
+          # next output starts mid-column. The dialog dies with the
+          # line — IRB submits as-is, it doesn't accept the selection.
+          wipe_dialog(state)
           @output.print "\r\n"
           return state.buffer
         when .ctrl_c? # discard the line like a shell does
+          wipe_dialog(state)
           @output.print "^C\r\n"
           return ""
         when .ctrl_d?
           # Empty line → EOF (read_line turns @eof into nil, the nil
           # that "keep reading" also returns is untouchable here).
           # With text on the line, accept it like the cooked tty did.
+          wipe_dialog(state)
           @output.print "\r\n"
           if state.buffer.empty?
             @eof = true
@@ -354,12 +432,30 @@ end
             return state.buffer
           end
         when .tab?
-          complete(prompt, state)
+          complete(prompt, state, dialog)
         when .ctrl_t?
+          dialog.dismiss(state.buffer, state.cursor)
           run_search(prompt, state)
+        when .escape? # Esc: dismiss the dialog (reline behavior)
+          if dialog.active?
+            dialog.dismiss(state.buffer, state.cursor)
+            render(prompt, state, dialog)
+          end
+        when .up?, .down?
+          # While the dialog is open its arrows belong to it, not to
+          # history navigation — exactly how IRB's candidate menu works.
+          if dialog.active?
+            dialog.move(event.key.up?? -1 : 1)
+            render(prompt, state, dialog)
+          else
+            state.handle(event)
+            dialog.update(state.buffer, state.cursor, @index)
+            render(prompt, state, dialog)
+          end
         else
           state.handle(event)
-          render(prompt, state)
+          dialog.update(state.buffer, state.cursor, @index)
+          render(prompt, state, dialog)
         end
       end
       nil
@@ -374,21 +470,33 @@ end
       end
     end
 
-    # Tab: complete the token before the cursor from the baked table.
-    # Unambiguous → insert the remainder of the candidate; ambiguous
-    # with a shared prefix → insert the prefix; ambiguous without
-    # progress → list the candidates under the line (irb-style).
-    private def complete(prompt : String, state : EditState) : Nil
+    # Tab: with the dialog open, accept the selected candidate;
+    # otherwise complete the common prefix and open the dialog when
+    # candidates remain ambiguous (reline flow).
+    private def complete(prompt : String, state : EditState, dialog : CompletionDialog) : Nil
       index = @index
       return unless index
 
-      insert, cands = Icr::Completion::Completer.complete(state.buffer, state.cursor, index)
-      state.insert_text(insert) unless insert.empty?
-      if cands.size > 1 && insert.empty?
-        @output.print "\r\n"
-        @output.print cands.first(48).join("  ") + "\e[K\r\n"
+      if dialog.active?
+        accept_selected(state, dialog, index)
+      else
+        insert, _cands = Icr::Completion::Completer.complete(state.buffer, state.cursor, index)
+        state.insert_text(insert) unless insert.empty?
+        dialog.update(state.buffer, state.cursor, index)
       end
-      render(prompt, state)
+      render(prompt, state, dialog)
+    end
+
+    # Replace the typed fragment with the dialog's selected candidate.
+    # Candidates always start with the fragment, so only the remainder
+    # is inserted at the cursor.
+    private def accept_selected(state : EditState, dialog : CompletionDialog,
+                                index : Icr::Completion::Index) : Nil
+      candidate = dialog.candidates[dialog.selected]?
+      return unless candidate
+      frag = Icr::Completion::Completer.fragment(state.buffer, state.cursor)
+      state.insert_text(candidate[frag.try(&.size) || 0..])
+      dialog.update(state.buffer, state.cursor, index)
     end
 
     SEARCH_ROWS = 11 # query row + 10 result rows, lifted on every redraw
@@ -426,7 +534,7 @@ end
             @output.print "\r\n"
             state.insert_text(hits[selected].insert) if hits[selected]?
             return render(prompt, state)
-          when .ctrl_c?, .ctrl_d?
+          when .ctrl_c?, .ctrl_d?, .escape?
             @output.print "\r\n"
             return render(prompt, state)
           when .up?   then selected -= 1
@@ -455,15 +563,69 @@ end
       render(prompt, state)
     end
 
-    private def render(prompt : String, state : EditState) : Nil
-      # Repaint the whole line; \e[K clears whatever the previous paint
-      # left to the right, then the cursor steps back from the end to
-      # its position within the buffer. The highlight's ANSI codes are
-      # zero-width, so the cursor math still uses the plain buffer.
+    DIALOG_WIDTH = 44 # label cap; longer names are truncated with "…"
+
+    # Erase the dialog rows below the line before leaving the editor
+    # loop (submit/discard/EOF): park at the end of the line first so
+    # \e[J doesn't eat the text right of the cursor.
+    private def wipe_dialog(state : EditState) : Nil
+      return if @dialog_drawn.zero?
       behind = state.buffer.size - state.cursor
-      @output.print "\r#{prompt}#{highlight(state.buffer)}\e[K"
-      @output.print "\e[#{behind}D" if behind > 0
+      @output.print "\e[#{behind}C" if behind > 0
+      @output.print "\e[J"
+      @dialog_drawn = 0
+    end
+
+    private def render(prompt : String, state : EditState,
+                       dialog : CompletionDialog? = nil) : Nil
+      # Repaint the whole line; \e[K clears whatever the previous paint
+      # left to the right of it, \e[J clears any dialog rows below (or
+      # leftovers from a previous frame). The highlight's ANSI codes
+      # are zero-width, so the cursor math still uses the plain buffer.
+      behind = state.buffer.size - state.cursor
+      @output.print "\r#{prompt}#{highlight(state.buffer)}\e[K\e[J"
+
+      if dialog && dialog.active?
+        labels, selected = dialog.visible
+        width = labels.map { |l| l.size > DIALOG_WIDTH ? DIALOG_WIDTH : l.size }.max
+        indent = dialog_indent(prompt, state, width + 2)
+        labels.each_with_index do |label, i|
+          label = label[0, DIALOG_WIDTH - 1] + "…" if label.size > DIALOG_WIDTH
+          body = " #{label.ljust(width)} "
+          row = i == selected ? "#{" " * indent}\e[7m#{body}\e[27m" : "#{" " * indent}#{body}"
+          @output.print "\r\n#{row}\e[K"
+        end
+        @dialog_drawn = labels.size
+        # Park the cursor back on the input line at its column.
+        @output.print "\e[#{labels.size}A\r\e[#{prompt.size + state.cursor}C"
+      else
+        @dialog_drawn = 0
+        @output.print "\e[#{behind}D" if behind > 0
+      end
       @output.flush
+    end
+
+    # Where the dialog starts: under the fragment being completed
+    # ("x = MyMa|" → under "MyMa"), like reline. Clamped so the widest
+    # row still fits the terminal — a long line pushes the dialog back
+    # toward the left edge instead of wrapping it.
+    private def dialog_indent(prompt : String, state : EditState, row_width : Int32) : Int32
+      frag = Icr::Completion::Completer.fragment(state.buffer, state.cursor)
+      col = prompt.size + state.cursor - (frag.try(&.size) || 0)
+      if (term = terminal_columns) > 0
+        col = col.clamp(0, {term - row_width, 0}.max)
+      end
+      col
+    end
+
+    # Terminal width via TIOCGWINSZ (0 when it can't be queried — the
+    # Winsize struct is already bound for the PTY backend).
+    private def terminal_columns : Int32
+      fd = @output.as?(IO::FileDescriptor).try(&.fd) || -1
+      return 0 if fd < 0
+      win = uninitialized Icr::LibPty::Winsize
+      ret = Icr::LibIoctl.ioctl(fd, Icr::LibIoctl::TIOCGWINSZ.to_u64!, pointerof(win))
+      ret.zero? ? win.ws_col.to_i : 0
     end
 
     # Paint the buffer exactly like the live interpreter paints its own

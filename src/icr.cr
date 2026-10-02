@@ -26,7 +26,7 @@ require "./icr/completion"
 require "./icr/completion_index"
 
 module Icr
-  VERSION = "1.6.0"
+  VERSION = "1.7.0"
 
   # Where the live backend's compiler comes from, in order:
   #   1. ICR_CRYSTAL env var (explicit override)

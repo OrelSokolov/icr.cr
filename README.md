@@ -3,7 +3,7 @@
 An irb-style console for Crystal:
 
 ```
-⢀⡴⠊⢉⡟⢿  icr v1.6.0 - Crystal 1.21.0 - live interpreter
+⢀⡴⠊⢉⡟⢿  icr v1.7.0 - Crystal 1.21.0 - live interpreter
 ⣎⣀⣴⡋⡟⣻  "exit" to quit · ".program" session source · ".reset" clear
 ⣟⣼⣱⣽⣟⣾  ~/your/project
 icr> 2 + 2
@@ -55,8 +55,24 @@ Commands inside the console:
 | `.program`  | print the session source so far          |
 | `.reset`    | drop state (live: restart the process)   |
 | `.exit` / `exit` / Ctrl+D | quit                       |
-| `Tab`       | autocomplete from the baked table        |
+| `Tab`       | autocomplete; accept the selected match  |
 | `Ctrl-T`    | fuzzy search over the baked table        |
+
+While you type, an IRB-style candidate menu opens below the line
+(same flow as reline): `↑`/`↓` move the selection, `Tab` accepts it,
+`Esc` dismisses the menu until the input changes, `Enter` submits the
+line as-is. While the menu is open, `↑`/`↓` belong to it, not to
+history navigation.
+
+Completion follows Crystal's namespace rules: `.` completes methods
+(`Math.sq` → `sqrt` — module-level defs count, instance methods on a
+class name don't), `::` completes constants and nested types
+(`Math::P` → `Math::PI`, `Colorize::` → its nested types). Constants
+are never offered after a dot — `Math.PI` isn't Crystal. Bare words
+complete to what's actually callable at the top level: global defs
+(`sl` → `sleep`, `pu` → `puts`), Object methods and type names — a
+bare `sqrt` completes to nothing because in Crystal it only exists as
+`Math.sqrt`; Ctrl-T searches every method in the table.
 
 An incomplete line (`def f`, open blocks…) continues with `... >`
 prompts until the expression is complete. In replay mode, end a line

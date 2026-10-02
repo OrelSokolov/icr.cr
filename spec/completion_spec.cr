@@ -62,8 +62,12 @@ describe Icr::Completion::Completer do
     "T\tMyMath\tmodule",
     "M\tMyMath\ts\tsquare\tx\t",
     "M\tMyMath\ts\tsum\ta, b\t",
+    "M\tMyMath\ti\tdouble\tx\t",
     "C\tMyMath\tPI",
+    "T\tMyMath::Extra\tmodule",
     "T\tString\tclass",
+    "M\tString\ts\tbuild\t",
+    "M\tString\ti\tupcase\t",
   ].join("\n")
 
   index = Icr::Completion::Index.new(fixture)
@@ -81,9 +85,45 @@ describe Icr::Completion::Completer do
     cands.should contain("square")
   end
 
-  it "offers constants after a receiver" do
+  it "completes module-level defs after a module dot (Math.sin rule)" do
+    insert, cands = Icr::Completion::Completer.complete("MyMath.d", 8, index)
+    insert.should eq("ouble")
+    cands.should eq(["double"]) # 'i' on a module = callable def
+  end
+
+  it "never offers constants after a dot — Math.PI isn't Crystal" do
+    _, cands = Icr::Completion::Completer.complete("MyMath.P", 8, index)
+    cands.should be_empty
     _, cands = Icr::Completion::Completer.complete("MyMath.", 7, index)
-    cands.should contain("PI")
+    cands.should_not contain("PI")
+  end
+
+  it "never offers instance methods after a class dot" do
+    _, cands = Icr::Completion::Completer.complete("String.u", 8, index)
+    cands.should be_empty # upcase is 'i' — String.upcase doesn't exist
+    _, cands = Icr::Completion::Completer.complete("String.b", 8, index)
+    cands.should eq(["build"])
+  end
+
+  it "completes constants and nested types behind ::" do
+    insert, cands = Icr::Completion::Completer.complete("MyMath::P", 9, index)
+    insert.should eq("I")
+    cands.should eq(["MyMath::PI"])
+
+    insert, cands = Icr::Completion::Completer.complete("MyMath::", 8, index)
+    insert.should eq("")
+    cands.should contain("MyMath::PI")
+    cands.should contain("MyMath::Extra") # nested types too
+  end
+
+  it "completes :: even when the bare namespace itself isn't baked" do
+    # Modules reach the table only as roots/ancestors; their nested
+    # types may still be there under full path names.
+    sparse = Icr::Completion::Index.new("T\tOuter::Inner\tclass")
+    insert, cands = Icr::Completion::Completer.complete("Outer::I", 8, sparse)
+    insert.should eq("nner")
+    cands.should eq(["Outer::Inner"])
+    Icr::Completion::Completer.complete("Nowhere::I", 9, sparse)[1].should be_empty
   end
 
   it "completes type names as words" do
@@ -92,8 +132,21 @@ describe Icr::Completion::Completer do
     cands.should contain("MyMath")
   end
 
+  it "completes bare words to top-level and Object methods" do
+    top = Icr::Completion::Index.new([
+      "T\tObject\tclass",
+      "M\tObject\ti\tto_s\t",
+      "M\t\ti\tsleep\ttime = 0\t", # empty owner = top-level def
+    ].join("\n"))
+    _, cands = Icr::Completion::Completer.complete("sl", 2, top)
+    cands.should eq(["sleep"])
+    _, cands = Icr::Completion::Completer.complete("to_", 3, top)
+    cands.should contain("to_s")
+  end
+
   it "does not complete unknown receivers or non-word input" do
     Icr::Completion::Completer.complete("unknown.sq", 10, index)[1].should be_empty
+    Icr::Completion::Completer.complete("unknown::sq", 10, index)[1].should be_empty
     Icr::Completion::Completer.complete("  ", 2, index)[1].should be_empty
   end
 end
