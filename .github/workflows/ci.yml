@@ -1,0 +1,38 @@
+# Build + specs on all three desktop platforms. The live backend is
+# Unix-only and CI machines have no interpreter-capable crystal, so the
+# live specs skip themselves there (live_interpreter_available?); what
+# this verifies is that the project COMPILES and the replay/editor/
+# completion specs pass everywhere — including Windows, where the
+# unix-guarded PTY code must stay out of the build.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.21.0
+
+      - name: Build the CLI
+        run: crystal build --no-color src/cli.cr -o build/icr
+
+      - name: Run specs
+        run: crystal spec --no-color
+
+      - name: Smoke-test the binary
+        shell: bash
+        run: |
+          printf '1 + 1\nexit\n' | ./build/icr${{ runner.os == 'Windows' && '.exe' || '' }} | grep -q '=> 2'
