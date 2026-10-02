@@ -2,14 +2,7 @@
 
 An irb-style console for Crystal:
 
-```
-⢀⡴⠊⢉⡟⢿  icr v1.8.0 - Crystal 1.21.0 - live interpreter
-⣎⣀⣴⡋⡟⣻  "exit" to quit · ".program" session source · ".reset" clear
-⣟⣼⣱⣽⣟⣾  ~/your/project
-icr> 2 + 2
-=> 4
-# 0.1s
-```
+![icr console demo](demo.png)
 
 ## Two backends
 
