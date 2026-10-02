@@ -25,6 +25,12 @@ task run: :interpreter do
   sh "crystal run --no-color src/cli.cr"
 end
 
+desc "Run the library usage demo (examples/library_demo.cr; " \
+     "ensures the interpreter is built first)"
+task librun: :interpreter do
+  sh "crystal run --no-color examples/library_demo.cr"
+end
+
 desc "Run specs"
 task :spec do
   sh "crystal spec"
