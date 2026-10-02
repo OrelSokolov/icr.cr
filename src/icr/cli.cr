@@ -45,5 +45,10 @@ module Icr::CLI
     puts # finish the "icr> " line cleanly on exit / Ctrl+D
     editor.close
     io.close
+  rescue IO::Error
+    # stdout went away — the consumer closed the pipe (grep -q, icr |
+    # head). Exit quietly like any Unix filter instead of crashing with
+    # an unhandled broken-pipe error; a REPL without stdout is done.
+    return
   end
 end

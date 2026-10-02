@@ -12,8 +12,10 @@ describe Icr do
   end
 
   it "prefers ICR_CRYSTAL when it exists" do
-    with_env("ICR_CRYSTAL", "/bin/sh") do
-      Icr.interpreter_bin.should eq("/bin/sh")
+    with_dummy_bin do |dummy|
+      with_env("ICR_CRYSTAL", dummy) do
+        Icr.interpreter_bin.should eq(dummy)
+      end
     end
   end
 
@@ -24,9 +26,11 @@ describe Icr do
   end
 
   it "falls back to CRYSTAL_INTERPRETER_PATH when ICR_CRYSTAL is unset" do
-    with_env("ICR_CRYSTAL", nil) do
-      with_env("CRYSTAL_INTERPRETER_PATH", "/bin/sh") do
-        Icr.interpreter_bin.should eq("/bin/sh")
+    with_dummy_bin do |dummy|
+      with_env("ICR_CRYSTAL", nil) do
+        with_env("CRYSTAL_INTERPRETER_PATH", dummy) do
+          Icr.interpreter_bin.should eq(dummy)
+        end
       end
     end
   end
@@ -40,9 +44,11 @@ describe Icr do
   end
 
   it "prefers ICR_CRYSTAL over CRYSTAL_INTERPRETER_PATH" do
-    with_env("ICR_CRYSTAL", "/bin/sh") do
-      with_env("CRYSTAL_INTERPRETER_PATH", "/nonexistent-crystal") do
-        Icr.interpreter_bin.should eq("/bin/sh")
+    with_dummy_bin do |dummy|
+      with_env("ICR_CRYSTAL", dummy) do
+        with_env("CRYSTAL_INTERPRETER_PATH", "/nonexistent-crystal") do
+          Icr.interpreter_bin.should eq(dummy)
+        end
       end
     end
   end
@@ -336,6 +342,17 @@ describe Icr::EditState do
     state.handle(Icr::KeyEvent.new(Icr::Key::Down)) # → draft
     state.buffer.should eq("d")
   end
+end
+
+# A file that exists on every platform — /bin/sh does not exist on
+# Windows, and the interpreter_bin specs only care that the path
+# resolves to an existing file.
+def with_dummy_bin(& : String -> _)
+  dummy = File.tempname("icr-bin", "")
+  File.write(dummy, "")
+  yield dummy
+ensure
+  File.delete(dummy) if dummy && File.exists?(dummy)
 end
 
 def with_env(key, value)

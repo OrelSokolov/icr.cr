@@ -179,9 +179,13 @@ describe "require_with_autocomplete (baked table)" do
     Dir.mkdir(dir)
     fixture = File.join(dir, "fixture.cr")
     # Crystal resolves require paths only relative to the requiring file
-    # (or via CRYSTAL_PATH), so point the fixture at the repo relatively.
-    icr_rel = Path.new(root, "src/icr").relative_to?(dir).not_nil!
-    math_rel = Path.new(root, "examples/my_math").relative_to?(dir).not_nil!
+    # (or via CRYSTAL_PATH); on Windows the temp dir can live on a
+    # different drive, where no relative path exists — fall back to
+    # absolute require paths.
+    icr = Path.new(root, "src/icr")
+    math = Path.new(root, "examples/my_math")
+    icr_rel = (icr.relative_to?(dir) || icr).to_posix.to_s
+    math_rel = (math.relative_to?(dir) || math).to_posix.to_s
     begin
       File.write(fixture, <<-SRC)
         require "#{icr_rel}"
