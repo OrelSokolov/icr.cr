@@ -1,4 +1,5 @@
 /lib/
 /.shards/
+/build/
 *.dSYM
 shard.lock
