@@ -3,7 +3,7 @@
 An irb-style console for Crystal:
 
 ```
-⢀⡴⠊⢉⡟⢿  icr v1.7.0 - Crystal 1.21.0 - live interpreter
+⢀⡴⠊⢉⡟⢿  icr v1.8.0 - Crystal 1.21.0 - live interpreter
 ⣎⣀⣴⡋⡟⣻  "exit" to quit · ".program" session source · ".reset" clear
 ⣟⣼⣱⣽⣟⣾  ~/your/project
 icr> 2 + 2
@@ -38,6 +38,23 @@ chain entirely and always uses replay — handy when the code needs
 C extensions or the interpreter misbehaves. Both env vars are read
 directly from Crystal code (`ENV[...]?` in `Icr.interpreter_bin`) at
 startup.
+
+## Install
+
+```sh
+git clone https://github.com/OrelSokolov/icr.cr && cd icr.cr
+shards install      # no external deps today; kept for the future
+sudo rake install   # → /usr/local/bin/icr
+# or without sudo:
+PREFIX="$HOME/.local" rake install   # → ~/.local/bin/icr
+rake uninstall      # remove (same PREFIX)
+```
+
+The install task builds a release binary (completion table baked in)
+and copies it as `icr` — `icr.exe` on Windows, where the default
+prefix is `%USERPROFILE%\.local` (no admin rights needed). The binary
+needs `crystal` in PATH for the replay fallback and for
+`scripts/build-interpreter.sh` to have somewhere to live.
 
 ## Usage
 
@@ -156,8 +173,9 @@ session = Icr.open_session(replay: true)   # force replay (the CLI's --replay)
   results.
 - Live backend: Linux and macOS (openpty via libutil; the interpreter
   builds from Crystal sources on both — see `scripts/build-interpreter.sh`).
-  macOS is untested in this repo; on Windows there is no openpty, so icr
-  runs in replay mode only (`crystal run` works everywhere Crystal does).
+  macOS is untested in this repo; on Windows there is no openpty, so
+  icr builds without the live backend (replay mode only, selected
+  automatically — `crystal run` works everywhere Crystal does).
 - C extensions are not supported by the `crystal i` interpreter: calling
   into one deadlocks the interpreter process (a warning is printed at
   startup in live mode). Replay mode compiles with `crystal run` and is

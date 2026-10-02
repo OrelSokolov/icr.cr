@@ -26,7 +26,7 @@ require "./icr/completion"
 require "./icr/completion_index"
 
 module Icr
-  VERSION = "1.7.0"
+  VERSION = "1.8.0"
 
   # Where the live backend's compiler comes from, in order:
   #   1. ICR_CRYSTAL env var (explicit override)
@@ -58,18 +58,31 @@ module Icr
   #
   # Pass replay: true to skip the interpreter entirely (the CLI's
   # --replay flag): always a ReplaySession, no fallback warnings.
-  def self.open_session(cwd : String? = nil, replay : Bool = false) : LiveSession | ReplaySession
+  #
+  # The live backend is Unix-only (openpty); on Windows open_session
+  # always returns a ReplaySession.
+  {% if flag?(:unix) %}
+    alias Session = LiveSession | ReplaySession
+  {% else %}
+    alias Session = ReplaySession
+  {% end %}
+
+  def self.open_session(cwd : String? = nil, replay : Bool = false) : Session
     return ReplaySession.new if replay
-    if bin = interpreter_bin
-      begin
-        return LiveSession.new(bin, cwd)
-      rescue ex
+    {% if flag?(:unix) %}
+      if bin = interpreter_bin
+        begin
+          return LiveSession.new(bin, cwd)
+        rescue ex
+          warn_no_interpreter
+          STDERR.puts "live mode unavailable (#{ex.message})"
+        end
+      else
         warn_no_interpreter
-        STDERR.puts "live mode unavailable (#{ex.message})"
       end
-    else
+    {% else %}
       warn_no_interpreter
-    end
+    {% end %}
     ReplaySession.new
   end
 

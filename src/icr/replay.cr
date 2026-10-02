@@ -17,6 +17,20 @@ class Icr::ReplaySession
   # def, class and other non-expression declarations).
   record Line, src : String, wrapped : Bool
 
+  # Session-shape probes (see Icr::Session): replay is always "alive"
+  # and never in continuation mode.
+  def live? : Bool
+    false
+  end
+
+  def alive? : Bool
+    true
+  end
+
+  def needs_continuation? : Bool
+    false
+  end
+
   getter lines = [] of Line
   @last_output = ""
 

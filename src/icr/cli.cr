@@ -6,17 +6,17 @@ module Icr::CLI
     io = Icr.open_session(replay: ARGV.includes?("--replay"))
     editor = Icr::LineEditor.new(Icr::Completion::Index.default)
     history = [] of String
-    mode = io.is_a?(Icr::LiveSession) ? "live interpreter" : "replay, ~2s/line"
+    mode = io.live? ? "live interpreter" : "replay, ~2s/line"
     puts Icr.banner(mode)
-    Icr.warn_c_extensions if io.is_a?(Icr::LiveSession)
+    Icr.warn_c_extensions if io.live?
     loop do
-      prompt = io.is_a?(Icr::LiveSession) && io.needs_continuation? ? "... > " : "icr> "
+      prompt = io.live? && io.needs_continuation? ? "... > " : "icr> "
       line = editor.read_line(prompt, history)
       break if line.nil? # Ctrl+D
       line = line.strip
       next if line.empty?
 
-      unless io.is_a?(Icr::LiveSession)
+      unless io.live?
         # Multi-line input in replay mode: end a line with '\' to continue.
         while line.ends_with?('\\')
           more = editor.read_line("... > ", history)
@@ -36,13 +36,14 @@ module Icr::CLI
         puts result.presence || "# (no output)"
         printf("# %.1fs\n", elapsed.total_seconds)
         history << line unless history.last? == line
-        # user code killed the interpreter (e.g. Process.exit) — follow it
-        break if io.is_a?(Icr::LiveSession) && !io.alive?
+        # user code killed the interpreter (e.g. Process.exit) — follow
+        # it; replay sessions report alive? always true
+        break unless io.alive?
       end
     end
 
     puts # finish the "icr> " line cleanly on exit / Ctrl+D
     editor.close
-    io.close if io.is_a?(Icr::LiveSession)
+    io.close
   end
 end

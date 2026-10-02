@@ -1,5 +1,7 @@
 # Live backend: a persistent `crystal i` interpreter process over a PTY.
+# Unix-only (openpty); on Windows the console runs in replay mode.
 #
+{% if flag?(:unix) %}
 # The PTY protocol was reverse-engineered from lib/reply's CharReader:
 # a read() returning more than 6 bytes (or a chunk containing the Enter
 # byte) is treated as a PASTE, so the line text and the Enter key (\r)
@@ -42,6 +44,10 @@ class Icr::LiveSession
 
   getter? needs_continuation : Bool = false
   getter history = [] of String
+
+  def live? : Bool
+    true
+  end
   @pending : String? = nil
   @dead = false
   # line number of the last prompt seen; 0 until the first prompt
@@ -282,3 +288,4 @@ class Icr::LiveSession
     end
   end
 end
+{% end %}

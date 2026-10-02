@@ -95,9 +95,11 @@ describe Icr::ReplaySession do
   end
 end
 
-# Live specs need an interpreter-capable crystal (the same resolution
-# chain the CLI uses); replay-only environments skip the whole block.
-def live_interpreter_available? : Bool
+{% if flag?(:unix) %}
+  # Live specs need an interpreter-capable crystal (the same resolution
+  # chain the CLI uses); replay-only environments skip the whole block.
+  # The live backend itself is Unix-only (openpty).
+  def live_interpreter_available? : Bool
   bin = Icr.interpreter_bin
   return false unless bin
   session = Icr::LiveSession.new(bin)
@@ -156,6 +158,7 @@ describe Icr::LineEditor do
     Icr::LineEditor.new.should be_a(Icr::BasicLineEditor)
   end
 end
+{% end %}
 
 describe Icr::BasicLineEditor do  it "prints the prompt and returns the line" do
     input = IO::Memory.new("1 + 1\n")
