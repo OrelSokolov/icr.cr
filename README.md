@@ -61,8 +61,12 @@ session.close
 
 ## Notes
 
-- Linux only for the live backend (openpty via libutil); the replay
-  backend works anywhere Crystal does.
+- Live backend: Linux and macOS (openpty via libutil; the interpreter
+  builds from Crystal sources on both — see `scripts/build-interpreter.sh`).
+  macOS is untested in this repo; on Windows there is no openpty, so icr
+  runs in replay mode only (`crystal run` works everywhere Crystal does).
+- The interpreter installs to `~/.local/share/icr/crystal` on every OS
+  (the same path icr's loader checks).
 - The PTY protocol quirks (paste threshold, window size, continuation
   prompts) are documented in `src/icr/live.cr`.
 - Crystal >= 1.21.

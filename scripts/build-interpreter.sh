@@ -11,6 +11,16 @@
 # here if the system doesn't have it.
 set -e
 
+case "$(uname -s)" in
+  Linux | Darwin) ;;
+  *)
+    echo "unsupported OS: $(uname -s)" >&2
+    echo "the interpreter build (and icr's live backend) supports Linux and macOS;" \
+         "on Windows icr falls back to replay mode" >&2
+    exit 1
+    ;;
+esac
+
 ICR_HOME="$HOME/.local/share/icr"
 ROOT="$ICR_HOME/root"
 VERSION="1.21.0"
