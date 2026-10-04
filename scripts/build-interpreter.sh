@@ -26,6 +26,24 @@ ROOT="$ICR_HOME/root"
 VERSION="1.21.0"
 mkdir -p "$ROOT" "$ICR_HOME"
 
+# --- toolchain discovery -------------------------------------------------------
+# Homebrew's llvm is keg-only: llvm-config lives outside the default PATH.
+if ! command -v llvm-config >/dev/null 2>&1; then
+  for brew_llvm in /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin; do
+    if [ -x "$brew_llvm/llvm-config" ]; then
+      PATH="$brew_llvm:$PATH"
+      export PATH
+      break
+    fi
+  done
+fi
+
+# nproc is Linux-only; macOS uses sysctl.
+case "$(uname -s)" in
+  Darwin) NPROC="$(sysctl -n hw.ncpu)" ;;
+  *) NPROC="$(nproc)" ;;
+esac
+
 # --- libyaml (often missing) --------------------------------------------------
 if [ ! -f "$ROOT/lib/libyaml.a" ]; then
   echo "=== building libyaml ==="
@@ -34,7 +52,7 @@ if [ ! -f "$ROOT/lib/libyaml.a" ]; then
   tar -C "$ICR_HOME" -xzf "$ICR_HOME/yaml-0.2.5.tar.gz"
   ( cd "$ICR_HOME/yaml-0.2.5" \
     && ./configure --prefix="$ROOT" --disable-shared --enable-static \
-    && make -j"$(nproc)" && make install )
+    && make -j"$NPROC" && make install )
 fi
 echo "=== libyaml OK ==="
 
@@ -49,7 +67,7 @@ cd "$ICR_HOME/crystal-$VERSION-src"
 
 export PKG_CONFIG_PATH="$ROOT/lib/pkgconfig"
 export CRYSTAL_LIBRARY_PATH="$ROOT/lib"
-make interpreter=1 -j"$(nproc)"
+make interpreter=1 -j"$NPROC"
 
 # expose as the icr-local compiler (version-stable symlink)
 rm -rf "$ICR_HOME/crystal"
