@@ -71,6 +71,19 @@ class Icr::LiveSession
   # Send one line (or continuation line) to the interpreter. Returns
   # the rendered output: program stdout plus "=> value" like irb.
   def submit(line : String) : String
+    submit_with_status(line)[1]
+  end
+
+  # Like #submit, but also reports whether the line evaluated cleanly:
+  # the interpreter renders successful results with a "=> value" tail;
+  # an exception (or the interpreter dying) comes back without one.
+  def submit_with_status(line : String) : Tuple(Bool, String)
+    text = submit_raw(line)
+    ok = text.lines.last?.try(&.starts_with?("=>")) || false
+    {ok, text}
+  end
+
+  private def submit_raw(line : String) : String
     return dead_message unless alive?
     write_chunk(line)
     wait_for_echo(line)

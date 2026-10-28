@@ -38,9 +38,17 @@ class Icr::ReplaySession
   # display for this submission. The line is committed only if it
   # compiles and runs cleanly; a failed line never poisons the session.
   def submit(line : String) : String
-    run_new_line(line, wrap: true) ||
-      run_new_line(line, wrap: false) ||
-      "error: line rejected; session unchanged"
+    submit_with_status(line)[1]
+  end
+
+  # Like #submit, but also reports whether the line ran cleanly: replay
+  # output alone can't tell app stdout (e.g. boot warnings) from a
+  # crash — both come back as text, only the exit status differs.
+  def submit_with_status(line : String) : Tuple(Bool, String)
+    ok, text = run_new_line(line, wrap: true)
+    return {true, text} if ok
+    ok, text = run_new_line(line, wrap: false)
+    ok ? {true, text} : {false, text}
   end
 
   def reset : String
@@ -56,7 +64,7 @@ class Icr::ReplaySession
   def close : Nil
   end
 
-  private def run_new_line(line : String, wrap : Bool) : String?
+  private def run_new_line(line : String, wrap : Bool) : Tuple(Bool, String)
     out_io = IO::Memory.new
     err_io = IO::Memory.new
     status = build_and_run(lines, line, wrap, out_io, err_io)
@@ -65,8 +73,8 @@ class Icr::ReplaySession
       # The wrapped variant failing is expected for require/def/class
       # lines — submit falls back to the plain run. Only surface the
       # error when the plain run is the one that failed.
-      return nil if wrap
-      return err_io.to_s.presence || "error: `crystal run` exited #{status.exit_code}"
+      return {false, ""} if wrap
+      return {false, err_io.to_s.presence || "error: `crystal run` exited #{status.exit_code}"}
     end
 
     # Success: commit the line, then show only the output this run
@@ -76,7 +84,7 @@ class Icr::ReplaySession
     diff = diff_output(full)
     @last_output = full
     lines << Line.new(line, wrap)
-    diff
+    {true, diff}
   end
 
   private def build_and_run(base : Array(Line), new_line : String, wrap_new : Bool, out_io, err_io)

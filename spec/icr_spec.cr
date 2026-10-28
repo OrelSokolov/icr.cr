@@ -87,6 +87,16 @@ describe Icr::ReplaySession do
     session.submit("1 + 1").should contain("=> 2")
   end
 
+  it "reports run status separately from output" do
+    session = Icr::ReplaySession.new
+    ok, text = session.submit_with_status(%(puts "boot warning"))
+    ok.should be_true
+    text.should contain("boot warning")
+    session.submit_with_status("raise \"boom\"")[0].should be_false
+    # a failed line never poisons the session
+    session.submit_with_status("1 + 1")[1].should contain("=> 2")
+  end
+
   it "resolves relative requires against the user's cwd" do
     session = Icr::ReplaySession.new
     session.submit(%(require "./examples/my_math")).should_not match /[Ee]rror/
